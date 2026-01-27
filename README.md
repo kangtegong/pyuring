@@ -25,6 +25,9 @@ make fetch-liburing
 make
 ```
 
+**참고**: `third_party/liburing`은 Git 저장소에 포함되지 않습니다 (`.gitignore`에 추가됨). 
+저장소를 클론한 후 위 명령어로 자동으로 다운로드됩니다.
+
 ## 2) 빌드
 
 ```bash
