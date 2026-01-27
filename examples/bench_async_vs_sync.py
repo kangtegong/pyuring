@@ -385,55 +385,30 @@ def main():
         
         for repeat in range(args.repeats):
             if args.repeats > 1:
-                print(f"=== 반복 {repeat + 1}/{args.repeats} ===")
+                print(f"반복 {repeat + 1}/{args.repeats}...", end=" ", flush=True)
             
             # ========== 동기 쓰기 ==========
-            if repeat == 0 or args.repeats > 1:
-                print("=== 동기 쓰기 (os.write) ===")
             sync_write_time, sync_write_bytes = benchmark_sync_write(file_paths, file_size_mb, args.odirect)
             sync_write_times.append(sync_write_time)
             sync_write_mb_s = (sync_write_bytes / (1024 * 1024)) / sync_write_time if sync_write_time > 0 else 0
-            if repeat == 0 or args.repeats > 1:
-                print(f"시간: {sync_write_time:.4f}초")
-                print(f"처리량: {sync_write_mb_s:.2f} MB/s")
-                print(f"총 쓰기: {sync_write_bytes / (1024 * 1024):.2f} MB")
-                print()
             
             # ========== 비동기 쓰기 ==========
-            if repeat == 0 or args.repeats > 1:
-                print("=== 비동기 쓰기 (io_uring) ===")
             async_write_time, async_write_bytes = benchmark_async_write(file_paths, file_size_mb, args.qd, args.odirect)
             async_write_times.append(async_write_time)
             async_write_mb_s = (async_write_bytes / (1024 * 1024)) / async_write_time if async_write_time > 0 else 0
-            if repeat == 0 or args.repeats > 1:
-                print(f"시간: {async_write_time:.4f}초")
-                print(f"처리량: {async_write_mb_s:.2f} MB/s")
-                print(f"총 쓰기: {async_write_bytes / (1024 * 1024):.2f} MB")
-                print()
             
             # ========== 동기 읽기 ==========
-            if repeat == 0 or args.repeats > 1:
-                print("=== 동기 읽기 (os.read) ===")
             sync_read_time, sync_read_bytes = benchmark_sync_read(file_paths, args.odirect)
             sync_read_times.append(sync_read_time)
             sync_read_mb_s = (sync_read_bytes / (1024 * 1024)) / sync_read_time if sync_read_time > 0 else 0
-            if repeat == 0 or args.repeats > 1:
-                print(f"시간: {sync_read_time:.4f}초")
-                print(f"처리량: {sync_read_mb_s:.2f} MB/s")
-                print(f"총 읽기: {sync_read_bytes / (1024 * 1024):.2f} MB")
-                print()
             
             # ========== 비동기 읽기 ==========
-            if repeat == 0 or args.repeats > 1:
-                print("=== 비동기 읽기 (io_uring) ===")
             async_read_time, async_read_bytes = benchmark_async_read(file_paths, file_size_mb, args.qd, args.odirect)
             async_read_times.append(async_read_time)
             async_read_mb_s = (async_read_bytes / (1024 * 1024)) / async_read_time if async_read_time > 0 else 0
-            if repeat == 0 or args.repeats > 1:
-                print(f"시간: {async_read_time:.4f}초")
-                print(f"처리량: {async_read_mb_s:.2f} MB/s")
-                print(f"총 읽기: {async_read_bytes / (1024 * 1024):.2f} MB")
-                print()
+            
+            if args.repeats > 1:
+                print("완료")
         
         # 평균 계산
         avg_sync_write_time = sum(sync_write_times) / len(sync_write_times)
@@ -474,54 +449,21 @@ def main():
             print(f"{'비동기 읽기':<20} {avg_async_read_time:<15.4f} {avg_async_read_mb_s:<15.2f} {read_speedup:<15.2f}x")
         
         print()
-        print("=" * 80)
-        print("=== 성능 분석 ===")
-        print("=" * 80)
         
-        # 쓰기 분석
+        # 성능 분석
         write_time_saved = avg_sync_write_time - avg_async_write_time
         write_percent_faster = ((avg_sync_write_time - avg_async_write_time) / avg_sync_write_time) * 100
-        print(f"\n📝 쓰기 성능:")
-        print(f"   동기:   {avg_sync_write_time:.4f}초 ({avg_sync_write_mb_s:.2f} MB/s)")
-        print(f"   비동기: {avg_async_write_time:.4f}초 ({avg_async_write_mb_s:.2f} MB/s)")
-        print(f"   → {write_speedup:.2f}x {'빠름' if write_speedup > 1 else '느림'} ({write_time_saved:.4f}초 절약, {write_percent_faster:.1f}% 향상)")
-        
-        # 읽기 분석
         read_time_saved = avg_sync_read_time - avg_async_read_time
         read_percent_faster = ((avg_sync_read_time - avg_async_read_time) / avg_sync_read_time) * 100 if avg_sync_read_time > 0 else 0
-        print(f"\n📖 읽기 성능:")
-        print(f"   동기:   {avg_sync_read_time:.4f}초 ({avg_sync_read_mb_s:.2f} MB/s)")
-        print(f"   비동기: {avg_async_read_time:.4f}초 ({avg_async_read_mb_s:.2f} MB/s)")
-        if read_speedup > 1:
-            print(f"   → {read_speedup:.2f}x 빠름 ({read_time_saved:.4f}초 절약, {read_percent_faster:.1f}% 향상)")
-        else:
-            print(f"   → {1/read_speedup:.2f}x 느림 ({-read_time_saved:.4f}초 더 소요, {-read_percent_faster:.1f}% 저하)")
-        
-        # 전체 분석
         total_sync_time = avg_sync_write_time + avg_sync_read_time
         total_async_time = avg_async_write_time + avg_async_read_time
         total_speedup = total_sync_time / total_async_time if total_async_time > 0 else 0
         total_time_saved = total_sync_time - total_async_time
         
-        print(f"\n📊 전체 성능:")
-        print(f"   동기:   {total_sync_time:.4f}초 (쓰기 {avg_sync_write_time:.4f}초 + 읽기 {avg_sync_read_time:.4f}초)")
-        print(f"   비동기: {total_async_time:.4f}초 (쓰기 {avg_async_write_time:.4f}초 + 읽기 {avg_async_read_time:.4f}초)")
-        print(f"   → {total_speedup:.2f}x {'빠름' if total_speedup > 1 else '느림'} ({total_time_saved:.4f}초 절약)")
-        
-        if args.repeats > 1:
-            # 표준 편차 계산
-            import statistics
-            if len(sync_write_times) > 1:
-                sync_write_std = statistics.stdev(sync_write_times)
-                async_write_std = statistics.stdev(async_write_times)
-                sync_read_std = statistics.stdev(sync_read_times)
-                async_read_std = statistics.stdev(async_read_times)
-                print(f"\n📈 통계 (표준 편차):")
-                print(f"   동기 쓰기:   {sync_write_std:.4f}초")
-                print(f"   비동기 쓰기: {async_write_std:.4f}초")
-                print(f"   동기 읽기:   {sync_read_std:.4f}초")
-                print(f"   비동기 읽기: {async_read_std:.4f}초")
-        
+        print("성능 요약:")
+        print(f"  쓰기: 동기 {avg_sync_write_time:.3f}초 → 비동기 {avg_async_write_time:.3f}초 ({write_speedup:.2f}x, {write_percent_faster:.1f}% 향상)")
+        print(f"  읽기: 동기 {avg_sync_read_time:.3f}초 → 비동기 {avg_async_read_time:.3f}초 ({read_speedup:.2f}x)")
+        print(f"  전체: {total_sync_time:.3f}초 → {total_async_time:.3f}초 ({total_speedup:.2f}x, {total_time_saved:.3f}초 절약)")
         print()
         
         # ========== 시스템 콜 측정 ==========

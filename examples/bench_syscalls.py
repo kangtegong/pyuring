@@ -4,6 +4,10 @@
 
 strace를 사용하여 동기/비동기 I/O의 시스템 콜 횟수를 측정합니다.
 이 스크립트는 strace로 래핑되어 실행됩니다.
+
+사용법:
+    strace -c -f python3 examples/bench_syscalls.py --mode sync --num-files 100 --file-size-mb 10
+    strace -c -f python3 examples/bench_syscalls.py --mode async --num-files 100 --file-size-mb 10 --qd 32
 """
 
 import os
