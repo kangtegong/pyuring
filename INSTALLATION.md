@@ -1,78 +1,139 @@
-# 설치 가이드 (Installation Guide)
+# Installation Guide
 
-이 문서는 adaptive_buffering 프로젝트를 설치하고 빌드하는 방법을 단계별로 설명합니다.
+This document explains how to install and build the adaptive_buffering project step by step.
 
-## 목차
+## Table of Contents
 
-1. [Python 패키지로 설치 (권장)](#python-패키지로-설치-권장)
-2. [소스에서 빌드](#소스에서-빌드)
-3. [의존성 설치](#의존성-설치)
-4. [빌드](#빌드)
-5. [빌드 확인](#빌드-확인)
-6. [간단한 테스트](#간단한-테스트)
-7. [문제 해결](#문제-해결)
+1. [Install as Python Package (Recommended)](#install-as-python-package-recommended)
+2. [Uninstall](#uninstall)
+3. [Build from Source](#build-from-source)
+4. [Install Dependencies](#install-dependencies)
+5. [Build](#build)
+6. [Verify Build](#verify-build)
+7. [Simple Tests](#simple-tests)
+8. [Troubleshooting](#troubleshooting)
 
-## Python 패키지로 설치 (권장)
+## Install as Python Package (Recommended)
 
-### 1. 저장소 클론
+### 1. Clone Repository
 
 ```bash
 git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
 cd adaptive_buffering
 ```
 
-또는 HTTPS:
+Or using HTTPS:
 
 ```bash
 git clone --recursive https://github.com/kangtegong/adaptive_buffering.git
 cd adaptive_buffering
 ```
 
-**참고**: `--recursive` 옵션은 submodule을 자동으로 초기화합니다.
+**Note**: The `--recursive` option automatically initializes submodules.
 
-### 2. 패키지 설치
+### 2. Initialize Submodules (Required)
 
-#### 개발 모드로 설치 (권장)
+This repository uses `third_party/liburing` as a Git submodule. You must initialize it before installation:
 
-개발 중이거나 소스 코드를 수정할 때:
+```bash
+# Initialize submodules
+git submodule update --init --recursive
+
+# Verify submodule is initialized
+ls -la third_party/liburing/
+```
+
+**Note**: If you cloned with `--recursive`, this step may be skipped, but it's safe to run it again.
+
+### 3. Build Native Library
+
+The native library must be built before installation. You have two options:
+
+#### Option A: Automatic Build (via pip install)
+
+The `setup.py` will automatically build the library during installation:
 
 ```bash
 pip install -e .
 ```
 
-또는:
+If this fails, proceed to Option B.
+
+#### Option B: Manual Build (Recommended if automatic build fails)
+
+```bash
+# 1. Build liburing (if using vendored liburing)
+cd third_party/liburing
+make
+cd ../..
+
+# 2. Build native library
+make
+
+# 3. Verify build
+ls -la build/liburingwrap.so
+
+# 4. Copy to package directory (if needed)
+mkdir -p pyiouring/lib
+cp build/liburingwrap.so pyiouring/lib/
+```
+
+**Troubleshooting**: If `make` fails with "fetch-liburing" error, the submodule is already initialized. Build directly:
+
+```bash
+# Skip fetch-liburing and build directly
+mkdir -p build
+gcc -O2 -g -Wall -Wextra -fPIC \
+    -Ithird_party/liburing/src/include \
+    -shared \
+    -o build/liburingwrap.so \
+    csrc/uring_wrap.c csrc/bench_direct.c \
+    third_party/liburing/src/liburing.a
+```
+
+### 4. Install Package
+
+#### Install in Development Mode (Recommended)
+
+When developing or modifying source code:
+
+```bash
+pip install -e .
+```
+
+Or:
 
 ```bash
 python setup.py develop
 ```
 
-#### 일반 설치
+#### Regular Installation
 
 ```bash
 pip install .
 ```
 
-또는:
+Or:
 
 ```bash
 python setup.py install
 ```
 
-### 3. 설치 확인
+### 5. Verify Installation
 
 ```bash
 python -c "import pyiouring; print(pyiouring.__version__)"
 ```
 
-### 4. 사용하기
+### 6. Usage
 
 ```python
 import pyiouring
 
-# 파일 복사
+# Copy file
 copied = pyiouring.copy_path("/tmp/source.dat", "/tmp/dest.dat")
 
-# 동적 버퍼 크기로 파일 쓰기
+# Write file with dynamic buffer size
 def adaptive_size(offset, total, default):
     progress = offset / total if total > 0 else 0
     if progress < 0.25:
@@ -91,59 +152,78 @@ written = pyiouring.write_newfile_dynamic(
 )
 ```
 
-자세한 사용 예제는 [README.md](README.md)를 참조하세요.
+For detailed usage examples, see [README.md](README.md).
 
-## 소스에서 빌드
+## Uninstall
 
-## 시작하기
+To uninstall the package:
 
-### 1. 저장소 클론
+```bash
+# Uninstall the package
+pip uninstall pyiouring
+```
 
-SSH를 사용하는 경우:
+**Note**: This only removes the Python package. Build artifacts in `build/` and `third_party/` directories are preserved. To clean them:
+
+```bash
+# Clean build artifacts
+make clean
+
+# Remove submodule (optional)
+rm -rf third_party/liburing
+```
+
+## Build from Source
+
+## Getting Started
+
+### 1. Clone Repository
+
+Using SSH:
 
 ```bash
 git clone git@github.com:kangtegong/adaptive_buffering.git
 cd adaptive_buffering
 ```
 
-HTTPS를 사용하는 경우:
+Using HTTPS:
 
 ```bash
 git clone https://github.com/kangtegong/adaptive_buffering.git
 cd adaptive_buffering
 ```
 
-### 2. Submodule 초기화 (필수)
+### 2. Initialize Submodules (Required)
 
-이 저장소는 `third_party/liburing`을 Git submodule로 관리합니다. 클론 후 submodule을 초기화해야 합니다:
+This repository manages `third_party/liburing` as a Git submodule. You must initialize submodules after cloning:
 
 ```bash
-# Submodule 초기화 및 다운로드
+# Initialize and download submodules
 git submodule update --init --recursive
 ```
 
-또는 클론할 때 한 번에:
+Or all at once when cloning:
 
 ```bash
 git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
 cd adaptive_buffering
 ```
 
-**참고**: `third_party/liburing`은 Git submodule로 관리됩니다. 
-클론 후 `git submodule update --init --recursive`로 초기화하거나, 
-`make fetch-liburing`으로 직접 다운로드할 수도 있습니다.
+**Note**: `third_party/liburing` is managed as a Git submodule. 
+After cloning, initialize with `git submodule update --init --recursive`, 
+or download directly with `make fetch-liburing`.
 
-## 의존성 설치
+## Install Dependencies
 
-### 시스템 요구사항
+### System Requirements
 
-- Linux 커널 5.15 이상 (io_uring 지원)
-- Python 3.6 이상
-- GCC 컴파일러
+- Linux kernel 5.15 or higher (io_uring support)
+- Python 3.6 or higher
+- GCC compiler
 - Make
-- Git (submodule 사용)
+- Git (for submodules)
 
-### 옵션 A: 시스템에 liburing-dev 설치 (권장)
+### Option A: Install liburing-dev on System (Recommended)
 
 Ubuntu/Debian:
 
@@ -164,100 +244,116 @@ Arch Linux:
 sudo pacman -S liburing
 ```
 
-### 옵션 B: vendored liburing 사용 (sudo 권한 없을 때)
+### Option B: Use Vendored liburing (When No Sudo Access)
 
-시스템에 `liburing-dev`를 설치할 수 없는 경우, 프로젝트에 포함된 liburing을 사용할 수 있습니다:
+If you cannot install `liburing-dev` on the system, you can use the liburing included in the project:
+
+**Step 1: Initialize submodule**
 
 ```bash
-# Submodule이 이미 초기화되어 있다면 바로 빌드 가능
+# Initialize submodule
+git submodule update --init --recursive
+```
+
+**Step 2: Build liburing**
+
+```bash
+# Build liburing
+cd third_party/liburing
+make
+cd ../..
+```
+
+**Step 3: Build native library**
+
+```bash
+# Build liburingwrap.so
 make
 ```
 
-만약 submodule이 없다면:
+**Note**: If `make` fails with "fetch-liburing" error because the submodule already exists, you can build directly:
 
 ```bash
-# liburing 자동 다운로드 및 빌드
-make fetch-liburing
+# Build directly (skip fetch-liburing)
+mkdir -p build
+gcc -O2 -g -Wall -Wextra -fPIC \
+    -Ithird_party/liburing/src/include \
+    -shared \
+    -o build/liburingwrap.so \
+    csrc/uring_wrap.c csrc/bench_direct.c \
+    third_party/liburing/src/liburing.a
+```
+
+## Build
+
+### Basic Build
+
+```bash
 make
 ```
 
-## 빌드
+If the build succeeds, the `build/liburingwrap.so` file will be created.
 
-### 기본 빌드
+### Build Options
 
-```bash
-make
-```
-
-빌드가 성공하면 `build/liburingwrap.so` 파일이 생성됩니다.
-
-### 빌드 옵션
-
-Makefile에서 다음 변수를 수정할 수 있습니다:
+You can modify the following variables in the Makefile:
 
 ```bash
-# 컴파일러 변경
+# Change compiler
 CC=gcc make
 
-# 최적화 레벨 변경
+# Change optimization level
 CFLAGS="-O3 -g" make
 
-# 디버그 빌드
+# Debug build
 CFLAGS="-O0 -g -DDEBUG" make
 ```
 
-## 빌드 확인
+## Verify Build
 
-빌드가 성공했는지 확인:
+Check if the build succeeded:
 
 ```bash
 ls -lh build/liburingwrap.so
 ```
 
-예상 출력:
+Expected output:
 ```
 -rwxr-xr-x 1 user user 123K Jan 23 20:00 build/liburingwrap.so
 ```
 
-## 간단한 테스트
+## Simple Tests
 
-빌드가 완료되면 다음 명령어로 테스트할 수 있습니다:
+After the build completes, you can test with the following commands:
 
-### 파일 읽기 데모
-
-```bash
-python3 python/demo_read.py /etc/hosts 256
-```
-
-### 동적 버퍼 크기로 파일 쓰기 데모
+### Dynamic Buffer Size Adjustment Test
 
 ```bash
-python3 python/demo_dynamic_buffer.py /tmp/test.dat 10 4096
+python3 examples/test_dynamic_buffer.py
 ```
 
-### 파일 복사 데모
+### Run Benchmarks
 
 ```bash
-# 소스 파일 생성 (테스트용)
-dd if=/dev/urandom of=/tmp/source.dat bs=1M count=10
+# Synchronous vs asynchronous I/O performance comparison
+python3 examples/bench_async_vs_sync.py --num-files 20 --file-size-mb 5
 
-# 파일 복사
-python3 python/demo_copy.py /tmp/source.dat /tmp/dest.dat
+# See examples/BENCHMARKS.md for detailed benchmark guide
 ```
 
-## 문제 해결
+## Troubleshooting
 
-### 빌드 오류
+### Build Errors
 
-**문제**: `liburing.h: No such file or directory`
+**Problem**: `liburing.h: No such file or directory`
 
-**해결**:
-- 시스템에 `liburing-dev`가 설치되어 있는지 확인: `dpkg -l | grep liburing-dev`
-- 또는 `make fetch-liburing`으로 vendored liburing 사용
+**Solution**:
+- Check if `liburing-dev` is installed on the system: `dpkg -l | grep liburing-dev`
+- Or use vendored liburing with `make fetch-liburing`
 
-**문제**: `gcc: command not found`
+**Problem**: `gcc: command not found`
 
-**해결**:
+**Solution**:
 ```bash
 # Ubuntu/Debian
 sudo apt-get install build-essential
@@ -266,9 +362,9 @@ sudo apt-get install build-essential
 sudo dnf groupinstall "Development Tools"
 ```
 
-**문제**: `make: command not found`
+**Problem**: `make: command not found`
 
-**해결**:
+**Solution**:
 ```bash
 # Ubuntu/Debian
 sudo apt-get install make
@@ -277,89 +373,156 @@ sudo apt-get install make
 sudo dnf install make
 ```
 
-### Submodule 관련 문제
+### Submodule Issues
 
-**문제**: `third_party/liburing`이 비어있음
+**Problem**: `third_party/liburing` is empty
 
-**해결**:
+**Solution**:
 ```bash
 git submodule update --init --recursive
 ```
 
-**문제**: Submodule 업데이트 후 빌드 실패
+**Problem**: `make` fails with "fetch-liburing" error: "destination path already exists"
 
-**해결**:
+**Solution**: This happens when the submodule directory exists but `make` tries to clone it again. Build directly:
+
 ```bash
-# Submodule 재초기화
+# Option 1: Build liburing first, then the main library
+cd third_party/liburing
+make
+cd ../..
+make
+
+# Option 2: Build directly with gcc (skip Makefile's fetch-liburing)
+mkdir -p build
+gcc -O2 -g -Wall -Wextra -fPIC \
+    -Ithird_party/liburing/src/include \
+    -shared \
+    -o build/liburingwrap.so \
+    csrc/uring_wrap.c csrc/bench_direct.c \
+    third_party/liburing/src/liburing.a
+```
+
+**Problem**: Build fails after submodule update
+
+**Solution**:
+```bash
+# Reinitialize submodule
 git submodule deinit -f third_party/liburing
 git submodule update --init --recursive
 
-# liburing 재빌드
+# Rebuild liburing
 cd third_party/liburing
 make clean
 make
 cd ../..
+
+# Rebuild main library
+make
 ```
 
-### Python 관련 문제
+### Python Issues
 
-**문제**: `ModuleNotFoundError: No module named 'uringwrap'`
+**Problem**: `ModuleNotFoundError: No module named 'pyiouring'`
 
-**해결**:
-- `build/liburingwrap.so`가 존재하는지 확인
-- Python 경로에 `python/` 디렉토리가 포함되어 있는지 확인
-- 또는 `PYTHONPATH` 환경 변수 설정:
+**Solution**:
+- Check if package is properly installed: `pip list | grep pyiouring`
+- Reinstall in development mode: `pip install -e .`
+- Or set `PYTHONPATH` environment variable:
   ```bash
-  export PYTHONPATH=$PWD/python:$PYTHONPATH
+  export PYTHONPATH=$PWD:$PYTHONPATH
   ```
 
-**문제**: `OSError: liburing.so.2: cannot open shared object file`
+**Problem**: `UringError: liburingwrap.so not found`
 
-**해결**:
-- 시스템에 `liburing` 라이브러리가 설치되어 있는지 확인
-- 또는 vendored liburing을 사용하도록 빌드
+**Solution**:
+1. Ensure submodule is initialized:
+   ```bash
+   git submodule update --init --recursive
+   ```
 
-### 런타임 오류
+2. Build liburing (if using vendored liburing):
+   ```bash
+   cd third_party/liburing
+   make
+   cd ../..
+   ```
 
-**문제**: `io_uring_setup failed: Operation not permitted`
+3. Build native library:
+   ```bash
+   make
+   # Or if make fails, build directly:
+   mkdir -p build
+   gcc -O2 -g -Wall -Wextra -fPIC \
+       -Ithird_party/liburing/src/include \
+       -shared \
+       -o build/liburingwrap.so \
+       csrc/uring_wrap.c csrc/bench_direct.c \
+       third_party/liburing/src/liburing.a
+   ```
 
-**해결**:
-- 커널 버전 확인: `uname -r` (5.15 이상 필요)
-- io_uring 지원 확인: `ls /sys/fs/io_uring/`
+4. Verify build:
+   ```bash
+   ls -la build/liburingwrap.so
+   ```
 
-**문제**: `uring_create failed (NULL)`
+5. For development mode, copy to package directory:
+   ```bash
+   mkdir -p pyiouring/lib
+   cp build/liburingwrap.so pyiouring/lib/
+   ```
 
-**해결**:
-- 커널이 io_uring을 지원하는지 확인
-- 권한 문제일 수 있음 (일부 시스템에서는 특정 권한 필요)
+6. Reinstall:
+   ```bash
+   pip install -e . --force-reinstall --no-cache-dir
+   ```
 
-## 추가 정보
+**Problem**: `OSError: liburing.so.2: cannot open shared object file`
 
-### 빌드 산출물
+**Solution**:
+- Check if `liburing` library is installed on the system
+- Or build to use vendored liburing
 
-- `build/liburingwrap.so`: Python에서 사용할 수 있는 공유 라이브러리
-- `third_party/liburing/src/liburing.a`: 정적 라이브러리 (vendored 빌드 시)
+### Runtime Errors
 
-### 환경 변수
+**Problem**: `io_uring_setup failed: Operation not permitted`
 
-빌드 시 다음 환경 변수를 사용할 수 있습니다:
+**Solution**:
+- Check kernel version: `uname -r` (5.15 or higher required)
+- Check io_uring support: `ls /sys/fs/io_uring/`
 
-- `CC`: 컴파일러 지정 (기본값: `gcc`)
-- `CFLAGS`: 컴파일 플래그 (기본값: `-O2 -g -Wall -Wextra -fPIC`)
-- `LDFLAGS`: 링커 플래그
+**Problem**: `uring_create failed (NULL)`
 
-예시:
+**Solution**:
+- Check if kernel supports io_uring
+- May be a permission issue (some systems require specific permissions)
+
+## Additional Information
+
+### Build Artifacts
+
+- `build/liburingwrap.so`: Shared library usable from Python
+- `third_party/liburing/src/liburing.a`: Static library (when using vendored build)
+
+### Environment Variables
+
+The following environment variables can be used during build:
+
+- `CC`: Specify compiler (default: `gcc`)
+- `CFLAGS`: Compile flags (default: `-O2 -g -Wall -Wextra -fPIC`)
+- `LDFLAGS`: Linker flags
+
+Example:
 ```bash
 CC=clang CFLAGS="-O3 -march=native" make
 ```
 
-### 정리
+### Cleanup
 
-빌드 산출물을 정리하려면:
+To clean build artifacts:
 
 ```bash
 make clean
 ```
 
-이 명령어는 `build/` 디렉토리를 삭제합니다. `third_party/liburing`은 유지됩니다.
-
+This command deletes the `build/` directory. `third_party/liburing` is preserved.

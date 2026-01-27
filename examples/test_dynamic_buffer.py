@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 """
-동적 버퍼 크기 조정 기능 검증 테스트
+Dynamic buffer size adjustment verification test
 
-실제로 파일을 읽고 쓰는 단위가 동적으로 조정되는지 확인합니다.
+Verifies that file read/write units are dynamically adjusted.
 """
 
 from __future__ import annotations
@@ -19,15 +19,15 @@ from pyiouring import copy_path_dynamic, write_newfile_dynamic, UringError
 
 
 class BufferSizeTracker:
-    """버퍼 크기 조정을 추적하는 클래스"""
+    """Class to track buffer size adjustments"""
     
     def __init__(self):
         self.calls: List[Tuple[int, int, int]] = []  # (offset, total, returned_size)
         self.expected_sizes: List[int] = []
     
     def callback(self, current_offset: int, total_bytes: int, default_block_size: int) -> int:
-        """콜백 함수 - 호출 정보를 기록하고 크기 반환"""
-        # 예상 크기 계산 (간단한 예제: 진행률에 따라 증가)
+        """Callback function - records call information and returns size"""
+        # Calculate expected size (simple example: increase based on progress)
         progress = current_offset / total_bytes if total_bytes > 0 else 0.0
         
         if progress < 0.25:
@@ -45,9 +45,9 @@ class BufferSizeTracker:
 
 
 def test_copy_path_dynamic():
-    """copy_path_dynamic의 동적 버퍼 크기 조정 테스트"""
+    """Test dynamic buffer size adjustment for copy_path_dynamic"""
     print("=" * 80)
-    print("테스트 1: copy_path_dynamic 동적 버퍼 크기 조정")
+    print("Test 1: copy_path_dynamic dynamic buffer size adjustment")
     print("=" * 80)
     
     file_size_mb = 5
@@ -59,17 +59,17 @@ def test_copy_path_dynamic():
         src_file = tmp_path / "source.dat"
         dst_file = tmp_path / "dest.dat"
         
-        # 소스 파일 생성
+        # Create source file
         with open(src_file, "wb") as f:
-            # 패턴 데이터 생성 (위치를 확인할 수 있도록)
+            # Generate pattern data (to verify position)
             for i in range(0, file_size, 1024):
                 chunk = f"CHUNK_{i:010d}_".encode() * (1024 // 20)
                 f.write(chunk[:min(1024, file_size - i)])
         
-        # 버퍼 크기 추적기 생성
+        # Create buffer size tracker
         tracker = BufferSizeTracker()
         
-        print(f"기본 블록 크기: {default_block_size / 1024:.0f}KB")
+        print(f"Default block size: {default_block_size / 1024:.0f}KB")
         
         try:
             copied = copy_path_dynamic(
@@ -81,25 +81,25 @@ def test_copy_path_dynamic():
                 fsync=False
             )
             
-            print(f"복사 완료: {copied:,} bytes")
+            print(f"Copy completed: {copied:,} bytes")
             
-            # 버퍼 크기 변화 확인
+            # Check buffer size changes
             sizes = [size for _, _, size in tracker.calls]
             unique_sizes = sorted(set(sizes))
-            print(f"콜백 호출: {len(tracker.calls)}회")
-            print(f"사용된 버퍼 크기: {[f'{s/1024:.0f}KB' for s in unique_sizes]}")
+            print(f"Callback calls: {len(tracker.calls)} times")
+            print(f"Buffer sizes used: {[f'{s/1024:.0f}KB' for s in unique_sizes]}")
             
-            # 파일 검증
+            # Verify file
             with open(src_file, "rb") as f:
                 src_data = f.read()
             with open(dst_file, "rb") as f:
                 dst_data = f.read()
             
             if src_data != dst_data:
-                print("✗ 파일 내용 불일치!")
+                print("✗ File content mismatch!")
                 return False
             
-            # 예상 동작 확인
+            # Verify expected behavior
             progress_ranges = [
                 (0.0, 0.25, default_block_size),
                 (0.25, 0.5, default_block_size * 2),
@@ -121,21 +121,21 @@ def test_copy_path_dynamic():
                     break
             
             if all_correct:
-                print("✓ 동적 버퍼 크기 조정 정상 동작")
+                print("✓ Dynamic buffer size adjustment working correctly")
             else:
-                print("✗ 버퍼 크기 조정 오류")
+                print("✗ Buffer size adjustment error")
             
             return all_correct
             
         except UringError as e:
-            print(f"✗ 오류 발생: {e}")
+            print(f"✗ Error occurred: {e}")
             return False
 
 
 def test_write_newfile_dynamic():
-    """write_newfile_dynamic의 동적 버퍼 크기 조정 테스트"""
+    """Test dynamic buffer size adjustment for write_newfile_dynamic"""
     print("\n" + "=" * 80)
-    print("테스트 2: write_newfile_dynamic 동적 버퍼 크기 조정")
+    print("Test 2: write_newfile_dynamic dynamic buffer size adjustment")
     print("=" * 80)
     
     total_mb = 10
@@ -145,10 +145,10 @@ def test_write_newfile_dynamic():
         tmp_path = Path(tmpdir)
         dst_file = tmp_path / "test_write.dat"
         
-        # 버퍼 크기 추적기 생성
+        # Create buffer size tracker
         tracker = BufferSizeTracker()
         
-        print(f"기본 블록 크기: {default_block_size / 1024:.0f}KB")
+        print(f"Default block size: {default_block_size / 1024:.0f}KB")
         
         try:
             written = write_newfile_dynamic(
@@ -160,23 +160,23 @@ def test_write_newfile_dynamic():
                 buffer_size_cb=tracker.callback
             )
             
-            print(f"쓰기 완료: {written:,} bytes")
+            print(f"Write completed: {written:,} bytes")
             
-            # 버퍼 크기 변화 확인
+            # Check buffer size changes
             sizes = [size for _, _, size in tracker.calls]
             unique_sizes = sorted(set(sizes))
-            print(f"콜백 호출: {len(tracker.calls)}회")
-            print(f"사용된 버퍼 크기: {[f'{s/1024:.0f}KB' for s in unique_sizes]}")
+            print(f"Callback calls: {len(tracker.calls)} times")
+            print(f"Buffer sizes used: {[f'{s/1024:.0f}KB' for s in unique_sizes]}")
             
-            # 파일 크기 확인
+            # Check file size
             actual_size = dst_file.stat().st_size
             expected_size = total_mb * 1024 * 1024
             
             if abs(actual_size - expected_size) >= 1024:
-                print(f"✗ 파일 크기 불일치 (예상: {expected_size:,}, 실제: {actual_size:,})")
+                print(f"✗ File size mismatch (expected: {expected_size:,}, actual: {actual_size:,})")
                 return False
             
-            # 예상 동작 확인
+            # Verify expected behavior
             progress_ranges = [
                 (0.0, 0.25, default_block_size),
                 (0.25, 0.5, default_block_size * 2),
@@ -198,21 +198,21 @@ def test_write_newfile_dynamic():
                     break
             
             if all_correct:
-                print("✓ 동적 버퍼 크기 조정 정상 동작")
+                print("✓ Dynamic buffer size adjustment working correctly")
             else:
-                print("✗ 버퍼 크기 조정 오류")
+                print("✗ Buffer size adjustment error")
             
             return all_correct
             
         except UringError as e:
-            print(f"✗ 오류 발생: {e}")
+            print(f"✗ Error occurred: {e}")
             return False
 
 
 def test_linear_buffer_size():
-    """선형 증가 버퍼 크기 전략 테스트"""
+    """Test linear increase buffer size strategy"""
     print("\n" + "=" * 80)
-    print("테스트 3: 선형 증가 버퍼 크기 전략")
+    print("Test 3: Linear increase buffer size strategy")
     print("=" * 80)
     
     file_size_mb = 3
@@ -224,23 +224,23 @@ def test_linear_buffer_size():
         src_file = tmp_path / "source.dat"
         dst_file = tmp_path / "dest.dat"
         
-        # 소스 파일 생성
+        # Create source file
         with open(src_file, "wb") as f:
             f.write(b"X" * file_size)
         
-        # 선형 증가 콜백
+        # Linear increase callback
         calls = []
         def linear_callback(offset: int, total: int, default: int) -> int:
             if total == 0:
                 return default
             progress = offset / total
-            # 1x에서 8x까지 선형 증가
+            # Linear increase from 1x to 8x
             multiplier = 1.0 + (progress * 7.0)
             size = int(default * multiplier)
             calls.append((offset, total, size, progress))
             return size
         
-        print(f"기본 블록 크기: {default_block_size / 1024:.0f}KB (예상 범위: {default_block_size / 1024:.0f}KB ~ {default_block_size * 8 / 1024:.0f}KB)")
+        print(f"Default block size: {default_block_size / 1024:.0f}KB (expected range: {default_block_size / 1024:.0f}KB ~ {default_block_size * 8 / 1024:.0f}KB)")
         
         try:
             copied = copy_path_dynamic(
@@ -252,78 +252,77 @@ def test_linear_buffer_size():
                 fsync=False
             )
             
-            print(f"복사 완료: {copied:,} bytes")
+            print(f"Copy completed: {copied:,} bytes")
             
-            # 선형 증가 확인
+            # Verify linear increase
             sizes = [size for _, _, size, _ in calls]
             min_size = min(sizes)
             max_size = max(sizes)
-            print(f"콜백 호출: {len(calls)}회")
-            print(f"버퍼 크기 범위: {min_size / 1024:.0f}KB ~ {max_size / 1024:.0f}KB")
+            print(f"Callback calls: {len(calls)} times")
+            print(f"Buffer size range: {min_size / 1024:.0f}KB ~ {max_size / 1024:.0f}KB")
             
-            # 크기 범위 검증
+            # Verify size range
             if min_size >= default_block_size * 0.9 and max_size <= default_block_size * 8.1:
-                print("✓ 버퍼 크기 범위 정상")
+                print("✓ Buffer size range correct")
             else:
-                print(f"✗ 버퍼 크기 범위 오류 (예상: {default_block_size/1024:.0f}KB ~ {default_block_size*8/1024:.0f}KB)")
+                print(f"✗ Buffer size range error (expected: {default_block_size/1024:.0f}KB ~ {default_block_size*8/1024:.0f}KB)")
                 return False
             
-            # 파일 검증
+            # Verify file
             with open(src_file, "rb") as f:
                 src_data = f.read()
             with open(dst_file, "rb") as f:
                 dst_data = f.read()
             
             if src_data == dst_data:
-                print("✓ 파일 내용 일치")
+                print("✓ File content matches")
                 return True
             else:
-                print("✗ 파일 내용 불일치!")
+                print("✗ File content mismatch!")
                 return False
                 
         except UringError as e:
-            print(f"✗ 오류 발생: {e}")
+            print(f"✗ Error occurred: {e}")
             return False
 
 
 def main():
-    """모든 테스트 실행"""
-    print("동적 버퍼 크기 조정 기능 검증 테스트")
+    """Run all tests"""
+    print("Dynamic buffer size adjustment verification test")
     print("=" * 80)
     
     results = []
     
-    # 테스트 1: copy_path_dynamic
+    # Test 1: copy_path_dynamic
     results.append(("copy_path_dynamic", test_copy_path_dynamic()))
     
-    # 테스트 2: write_newfile_dynamic
+    # Test 2: write_newfile_dynamic
     results.append(("write_newfile_dynamic", test_write_newfile_dynamic()))
     
-    # 테스트 3: 선형 증가 전략
+    # Test 3: Linear increase strategy
     results.append(("linear_buffer_size", test_linear_buffer_size()))
     
-    # 결과 요약
+    # Result summary
     print("\n" + "=" * 80)
-    print("테스트 결과 요약")
+    print("Test result summary")
     print("=" * 80)
     
     all_passed = True
     for test_name, result in results:
-        status = "✓ 통과" if result else "✗ 실패"
+        status = "✓ Passed" if result else "✗ Failed"
         print(f"{test_name:<30} {status}")
         if not result:
             all_passed = False
     
     print("=" * 80)
     if all_passed:
-        print("모든 테스트 통과!")
+        print("All tests passed!")
         return 0
     else:
-        print("일부 테스트 실패")
+        print("Some tests failed")
         return 1
 
 
 if __name__ == "__main__":
     import sys
     sys.exit(main())
-

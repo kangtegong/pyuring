@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
 """
-시스템 콜 호출 횟수 측정 스크립트
+System call count measurement script
 
-strace를 사용하여 동기/비동기 I/O의 시스템 콜 횟수를 측정합니다.
-이 스크립트는 strace로 래핑되어 실행됩니다.
+Measures system call counts for synchronous/asynchronous I/O using strace.
+This script is executed wrapped with strace.
 
-사용법:
+Usage:
     strace -c -f python3 examples/bench_syscalls.py --mode sync --num-files 100 --file-size-mb 10
     strace -c -f python3 examples/bench_syscalls.py --mode async --num-files 100 --file-size-mb 10 --qd 32
 """
@@ -21,7 +21,7 @@ from pyiouring import UringCtx, BufferPool
 
 
 def sync_write_read(num_files: int, file_size_mb: int):
-    """동기 방식으로 파일 쓰기/읽기"""
+    """Write/read files synchronously"""
     import time
     
     file_size = file_size_mb * 1024 * 1024
@@ -30,7 +30,7 @@ def sync_write_read(num_files: int, file_size_mb: int):
     with tempfile.TemporaryDirectory(prefix="iouring_syscall_") as tmpdir:
         tmp_path = Path(tmpdir)
         
-        # 쓰기
+        # Write
         for i in range(num_files):
             file_path = tmp_path / f"test_{i:03d}.dat"
             fd = os.open(file_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
@@ -44,7 +44,7 @@ def sync_write_read(num_files: int, file_size_mb: int):
             finally:
                 os.close(fd)
         
-        # 읽기
+        # Read
         for i in range(num_files):
             file_path = tmp_path / f"test_{i:03d}.dat"
             fd = os.open(file_path, os.O_RDONLY)
@@ -59,7 +59,7 @@ def sync_write_read(num_files: int, file_size_mb: int):
 
 
 def async_write_read(num_files: int, file_size_mb: int, qd: int):
-    """비동기 방식으로 파일 쓰기/읽기"""
+    """Write/read files asynchronously"""
     import time
     import ctypes
     
@@ -71,22 +71,22 @@ def async_write_read(num_files: int, file_size_mb: int, qd: int):
         
         with UringCtx(entries=qd * 2) as ctx:
             with BufferPool.create(initial_count=qd, initial_size=file_size) as pool:
-                # 쓰기
+                # Write
                 file_idx = 0
                 inflight = 0
                 
-                # 초기 작업 제출
+                # Submit initial operations
                 while file_idx < num_files and inflight < qd:
                     file_path = tmp_path / f"test_{file_idx:03d}.dat"
                     fd = os.open(file_path, os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
                     slot = inflight % qd
                     
-                    # 버퍼에 데이터 복사
+                    # Copy data to buffer
                     buf_ptr, buf_size = pool.get_ptr(slot)
                     pool.set_size(slot, len(data))
                     ctypes.memmove(buf_ptr, data, len(data))
                     
-                    # 비동기 쓰기 제출 (user_data에 fd 인코딩)
+                    # Submit asynchronous write (encode fd in user_data)
                     user_data_encoded = (fd << 32) | slot
                     ctx.write_async_ptr(fd, buf_ptr, len(data), offset=0, user_data=user_data_encoded)
                     inflight += 1
@@ -94,10 +94,10 @@ def async_write_read(num_files: int, file_size_mb: int, qd: int):
                 
                 ctx.submit()
                 
-                # 나머지 작업 처리
+                # Process remaining operations
                 while file_idx < num_files:
                     user_data_encoded, result = ctx.wait_completion()
-                    # fd 추출 및 닫기
+                    # Extract and close fd
                     fd = user_data_encoded >> 32
                     os.close(fd)
                     inflight -= 1
@@ -117,18 +117,18 @@ def async_write_read(num_files: int, file_size_mb: int, qd: int):
                     
                     ctx.submit()
                 
-                # 남은 완료 대기
+                # Wait for remaining completions
                 while inflight > 0:
                     user_data_encoded, result = ctx.wait_completion()
                     fd = user_data_encoded >> 32
                     os.close(fd)
                     inflight -= 1
                 
-                # 읽기
+                # Read
                 file_idx = 0
                 inflight = 0
                 
-                # 초기 작업 제출
+                # Submit initial operations
                 while file_idx < num_files and inflight < qd:
                     file_path = tmp_path / f"test_{file_idx:03d}.dat"
                     fd = os.open(file_path, os.O_RDONLY)
@@ -144,7 +144,7 @@ def async_write_read(num_files: int, file_size_mb: int, qd: int):
                 
                 ctx.submit()
                 
-                # 나머지 작업 처리
+                # Process remaining operations
                 while file_idx < num_files:
                     user_data_encoded, result = ctx.wait_completion()
                     fd = user_data_encoded >> 32
@@ -165,7 +165,7 @@ def async_write_read(num_files: int, file_size_mb: int, qd: int):
                     
                     ctx.submit()
                 
-                # 남은 완료 대기
+                # Wait for remaining completions
                 while inflight > 0:
                     user_data_encoded, result = ctx.wait_completion()
                     fd = user_data_encoded >> 32
@@ -176,11 +176,11 @@ def async_write_read(num_files: int, file_size_mb: int, qd: int):
 def main():
     import argparse
     
-    parser = argparse.ArgumentParser(description="시스템 콜 측정 스크립트")
-    parser.add_argument("--mode", choices=["sync", "async"], required=True, help="측정 모드")
-    parser.add_argument("--num-files", type=int, default=100, help="파일 개수")
-    parser.add_argument("--file-size-mb", type=int, default=10, help="파일 크기 (MB)")
-    parser.add_argument("--qd", type=int, default=32, help="Queue depth (async 모드)")
+    parser = argparse.ArgumentParser(description="System call measurement script")
+    parser.add_argument("--mode", choices=["sync", "async"], required=True, help="Measurement mode")
+    parser.add_argument("--num-files", type=int, default=100, help="Number of files")
+    parser.add_argument("--file-size-mb", type=int, default=10, help="File size (MB)")
+    parser.add_argument("--qd", type=int, default=32, help="Queue depth (async mode)")
     
     args = parser.parse_args()
     

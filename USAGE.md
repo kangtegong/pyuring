@@ -1,41 +1,41 @@
-# 사용 가이드 (Usage Guide)
+# Usage Guide
 
-이 문서는 `pyiouring` 패키지를 사용하는 방법을 설명합니다.
+This document explains how to use the `pyiouring` package.
 
-## 설치
+## Installation
 
-먼저 패키지를 설치해야 합니다:
+First, you need to install the package:
 
 ```bash
-# 저장소 클론
+# Clone repository
 git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
 cd adaptive_buffering
 
-# 패키지 설치
+# Install package
 pip install -e .
 ```
 
-자세한 설치 방법은 [INSTALLATION.md](INSTALLATION.md)를 참조하세요.
+For detailed installation instructions, see [INSTALLATION.md](INSTALLATION.md).
 
-## 기본 사용법
+## Basic Usage
 
-### 패키지 import
+### Import Package
 
 ```python
 import pyiouring
 ```
 
-### 파일 복사
+### File Copy
 
-가장 간단한 사용법:
+Simplest usage:
 
 ```python
-# 기본 설정으로 파일 복사
+# Copy file with default settings
 copied_bytes = pyiouring.copy_path("/tmp/source.dat", "/tmp/dest.dat")
 print(f"Copied {copied_bytes:,} bytes")
 ```
 
-옵션 지정:
+With options:
 
 ```python
 copied_bytes = pyiouring.copy_path(
@@ -46,58 +46,58 @@ copied_bytes = pyiouring.copy_path(
 )
 ```
 
-### 동적 버퍼 크기 조정으로 파일 복사
+### File Copy with Dynamic Buffer Size Adjustment
 
-진행 상황에 따라 버퍼 크기를 동적으로 조정:
+Adjust buffer size dynamically based on progress:
 
 ```python
 def adaptive_buffer_size(current_offset, total_bytes, default_block_size):
-    """진행 상황에 따라 버퍼 크기 조정"""
+    """Adjust buffer size based on progress"""
     if total_bytes == 0:
         return default_block_size
     
     progress = current_offset / total_bytes
     
     if progress < 0.25:
-        return default_block_size      # 처음 25%: 기본 크기
+        return default_block_size      # First 25%: default size
     elif progress < 0.5:
-        return default_block_size * 2  # 다음 25%: 2배
+        return default_block_size * 2  # Next 25%: 2x
     elif progress < 0.75:
-        return default_block_size * 4  # 다음 25%: 4배
+        return default_block_size * 4  # Next 25%: 4x
     else:
-        return default_block_size * 8  # 마지막 25%: 8배
+        return default_block_size * 8  # Last 25%: 8x
 
-# 동적 버퍼 크기로 복사
+# Copy with dynamic buffer size
 copied_bytes = pyiouring.copy_path_dynamic(
     "/tmp/source.dat",
     "/tmp/dest.dat",
     qd=32,
     block_size=65536,
     buffer_size_cb=adaptive_buffer_size,
-    fsync=True  # SSD에 flush
+    fsync=True  # Flush to SSD
 )
 ```
 
-### 파일 쓰기
+### File Writing
 
-새 파일을 생성하고 쓰기:
+Create and write a new file:
 
 ```python
-# 기본 파일 쓰기
+# Basic file write
 written_bytes = pyiouring.write_newfile(
     "/tmp/newfile.dat",
     total_mb=100,      # 100MB
-    block_size=4096,   # 4KB 블록
+    block_size=4096,   # 4KB blocks
     qd=256,            # Queue depth
-    fsync=True         # 마지막에 fsync
+    fsync=True         # fsync at the end
 )
 ```
 
-동적 버퍼 크기로 쓰기:
+Write with dynamic buffer size:
 
 ```python
 def linear_increase(offset, total, default):
-    """선형적으로 버퍼 크기 증가"""
+    """Linearly increase buffer size"""
     if total == 0:
         return default
     progress = offset / total
@@ -114,28 +114,28 @@ written_bytes = pyiouring.write_newfile_dynamic(
 )
 ```
 
-### UringCtx 사용 (고급)
+### Using UringCtx (Advanced)
 
-더 세밀한 제어가 필요한 경우:
+For more fine-grained control:
 
 ```python
 import os
 import pyiouring
 
-# Context 생성
+# Create context
 with pyiouring.UringCtx(entries=64) as ctx:
-    # 파일 열기
+    # Open file
     fd = os.open("/tmp/test.dat", os.O_RDONLY)
     try:
-        # 동기 읽기
+        # Synchronous read
         data = ctx.read(fd, length=4096, offset=0)
         print(f"Read {len(data)} bytes")
         
-        # 배치 읽기
+        # Batch read
         data = ctx.read_batch(fd, block_size=4096, blocks=10, offset=0)
         print(f"Read {len(data)} bytes in batch")
         
-        # 여러 오프셋에서 읽기
+        # Read from multiple offsets
         offsets = [0, 4096, 8192, 12288]
         data = ctx.read_offsets(fd, block_size=4096, offsets=offsets)
         print(f"Read {len(data)} bytes from {len(offsets)} offsets")
@@ -143,9 +143,9 @@ with pyiouring.UringCtx(entries=64) as ctx:
         os.close(fd)
 ```
 
-### 비동기 읽기/쓰기 API
+### Asynchronous Read/Write API
 
-io_uring의 비동기 기능을 직접 사용하려면:
+To directly use io_uring's asynchronous features:
 
 ```python
 import os
@@ -154,18 +154,18 @@ import pyiouring
 with pyiouring.UringCtx(entries=64) as ctx:
     fd = os.open("/tmp/test.dat", os.O_RDONLY)
     try:
-        # 비동기 읽기 제출
+        # Submit asynchronous read
         buf = bytearray(4096)
         ctx.read_async(fd, buf, offset=0, user_data=1)
         
-        # 작업 제출
+        # Submit operations
         ctx.submit()
         
-        # 완료 대기 (블로킹)
+        # Wait for completion (blocking)
         user_data, result = ctx.wait_completion()
         print(f"Read {result} bytes (user_data={user_data})")
         
-        # 또는 논블로킹으로 확인
+        # Or check non-blocking
         completion = ctx.peek_completion()
         if completion:
             user_data, result = completion
@@ -174,13 +174,13 @@ with pyiouring.UringCtx(entries=64) as ctx:
         os.close(fd)
 ```
 
-비동기 쓰기:
+Asynchronous write:
 
 ```python
 with pyiouring.UringCtx(entries=64) as ctx:
     fd = os.open("/tmp/test.dat", os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
     try:
-        # 여러 쓰기 작업 제출
+        # Submit multiple write operations
         data1 = b"Chunk 1"
         data2 = b"Chunk 2"
         data3 = b"Chunk 3"
@@ -189,10 +189,10 @@ with pyiouring.UringCtx(entries=64) as ctx:
         ctx.write_async(fd, data2, offset=len(data1), user_data=2)
         ctx.write_async(fd, data3, offset=len(data1)+len(data2), user_data=3)
         
-        # 모든 작업 제출
+        # Submit all operations
         ctx.submit()
         
-        # 모든 완료 대기
+        # Wait for all completions
         for _ in range(3):
             user_data, result = ctx.wait_completion()
             print(f"Write {user_data}: {result} bytes written")
@@ -200,45 +200,45 @@ with pyiouring.UringCtx(entries=64) as ctx:
         os.close(fd)
 ```
 
-### 동적 버퍼 풀 (BufferPool)
+### Dynamic Buffer Pool (BufferPool)
 
-동적으로 버퍼 크기를 조정하면서 비동기 I/O를 수행:
+Perform asynchronous I/O while dynamically adjusting buffer sizes:
 
 ```python
 import os
 import pyiouring
 
 with pyiouring.UringCtx(entries=64) as ctx:
-    # 버퍼 풀 생성 (4개 버퍼, 각 4KB로 시작)
+    # Create buffer pool (4 buffers, each starting at 4KB)
     with pyiouring.BufferPool.create(initial_count=4, initial_size=4096) as pool:
         fd = os.open("/tmp/test.dat", os.O_RDONLY)
         try:
-            # 첫 번째 읽기: 4KB
+            # First read: 4KB
             buf_ptr, buf_size = pool.get_ptr(0)
             pool.set_size(0, 4096)
             ctx.read_async_ptr(fd, buf_ptr, 4096, offset=0, user_data=1)
             
-            # 두 번째 읽기: 버퍼 크기를 8KB로 조정
+            # Second read: adjust buffer size to 8KB
             pool.resize(1, 8192)
             buf_ptr, buf_size = pool.get_ptr(1)
             pool.set_size(1, 8192)
             ctx.read_async_ptr(fd, buf_ptr, 8192, offset=4096, user_data=2)
             
-            # 세 번째 읽기: 버퍼 크기를 16KB로 조정
+            # Third read: adjust buffer size to 16KB
             pool.resize(2, 16384)
             buf_ptr, buf_size = pool.get_ptr(2)
             pool.set_size(2, 16384)
             ctx.read_async_ptr(fd, buf_ptr, 16384, offset=12288, user_data=3)
             
-            # 모든 작업 제출
+            # Submit all operations
             ctx.submit()
             
-            # 완료 처리
+            # Handle completions
             for _ in range(3):
                 user_data, result = ctx.wait_completion()
                 print(f"Read {user_data}: {result} bytes")
                 
-                # 버퍼 데이터 읽기
+                # Read buffer data
                 if user_data == 1:
                     data = pool.get(0)
                 elif user_data == 2:
@@ -250,17 +250,17 @@ with pyiouring.UringCtx(entries=64) as ctx:
             os.close(fd)
 ```
 
-적응형 버퍼 크기 조정 예제:
+Adaptive buffer size adjustment example:
 
 ```python
 def adaptive_read_with_pool(ctx, fd, file_size, pool):
-    """파일 위치에 따라 버퍼 크기를 동적으로 조정하며 읽기"""
+    """Read while dynamically adjusting buffer size based on file position"""
     offset = 0
     user_data = 1
     slot = 0
     
     while offset < file_size:
-        # 진행 상황에 따라 버퍼 크기 결정
+        # Determine buffer size based on progress
         progress = offset / file_size
         if progress < 0.25:
             buf_size = 4096
@@ -275,11 +275,11 @@ def adaptive_read_with_pool(ctx, fd, file_size, pool):
             buf_size = 32768
             target_slot = 3
         
-        # 버퍼 크기 조정
+        # Adjust buffer size
         pool.resize(target_slot, buf_size)
         pool.set_size(target_slot, min(buf_size, file_size - offset))
         
-        # 비동기 읽기 제출
+        # Submit asynchronous read
         buf_ptr, _ = pool.get_ptr(target_slot)
         ctx.read_async_ptr(fd, buf_ptr, min(buf_size, file_size - offset), 
                           offset=offset, user_data=user_data)
@@ -287,14 +287,14 @@ def adaptive_read_with_pool(ctx, fd, file_size, pool):
         offset += buf_size
         user_data += 1
         
-        # 주기적으로 제출
+        # Submit periodically
         if user_data % 8 == 0:
             ctx.submit()
     
-    # 남은 작업 제출
+    # Submit remaining operations
     ctx.submit()
     
-    # 모든 완료 대기
+    # Wait for all completions
     results = []
     for _ in range(user_data - 1):
         user_data_result, result = ctx.wait_completion()
@@ -303,7 +303,7 @@ def adaptive_read_with_pool(ctx, fd, file_size, pool):
     return results
 ```
 
-## 에러 처리
+## Error Handling
 
 ```python
 import pyiouring
@@ -314,25 +314,25 @@ except pyiouring.UringError as e:
     print(f"Error: {e}")
 ```
 
-## 예제
+## Examples
 
-### 예제 1: 간단한 파일 복사
+### Example 1: Simple File Copy
 
 ```python
 import pyiouring
 
-# 파일 복사
+# Copy file
 copied = pyiouring.copy_path("input.txt", "output.txt")
 print(f"Copied {copied} bytes")
 ```
 
-### 예제 2: 동적 버퍼 크기로 대용량 파일 복사
+### Example 2: Large File Copy with Dynamic Buffer Size
 
 ```python
 import pyiouring
 
 def stepwise_buffer_size(offset, total, default):
-    """단계적으로 버퍼 크기 증가"""
+    """Stepwise buffer size increase"""
     if total == 0:
         return default
     
@@ -347,7 +347,7 @@ def stepwise_buffer_size(offset, total, default):
     else:
         return default * 8
 
-# 대용량 파일 복사
+# Copy large file
 copied = pyiouring.copy_path_dynamic(
     "/path/to/large_file.dat",
     "/path/to/copy.dat",
@@ -359,16 +359,16 @@ copied = pyiouring.copy_path_dynamic(
 print(f"Copied {copied:,} bytes")
 ```
 
-### 예제 3: 여러 파일 생성
+### Example 3: Create Multiple Files
 
 ```python
 import pyiouring
 import os
 
-# 디렉토리 생성
+# Create directory
 os.makedirs("/tmp/many_files", exist_ok=True)
 
-# 여러 파일 생성
+# Create multiple files
 total_written = pyiouring.write_manyfiles(
     "/tmp/many_files",
     nfiles=100,
@@ -380,60 +380,60 @@ total_written = pyiouring.write_manyfiles(
 print(f"Total written: {total_written:,} bytes")
 ```
 
-## API 참조
+## API Reference
 
-### 함수
+### Functions
 
-- `copy_path(src_path, dst_path, *, qd=32, block_size=1048576)`: 파일 복사
-- `copy_path_dynamic(src_path, dst_path, *, qd=32, block_size=1048576, buffer_size_cb=None, fsync=False)`: 동적 버퍼 크기로 파일 복사
-- `write_newfile(dst_path, *, total_mb, block_size=4096, qd=256, fsync=False, dsync=False)`: 새 파일 쓰기
-- `write_newfile_dynamic(dst_path, *, total_mb, block_size=4096, qd=256, fsync=False, dsync=False, buffer_size_cb=None)`: 동적 버퍼 크기로 새 파일 쓰기
-- `write_manyfiles(dir_path, *, nfiles, mb_per_file, block_size=4096, qd=256, fsync_end=False)`: 여러 파일 쓰기
+- `copy_path(src_path, dst_path, *, qd=32, block_size=1048576)`: Copy file
+- `copy_path_dynamic(src_path, dst_path, *, qd=32, block_size=1048576, buffer_size_cb=None, fsync=False)`: Copy file with dynamic buffer size
+- `write_newfile(dst_path, *, total_mb, block_size=4096, qd=256, fsync=False, dsync=False)`: Write new file
+- `write_newfile_dynamic(dst_path, *, total_mb, block_size=4096, qd=256, fsync=False, dsync=False, buffer_size_cb=None)`: Write new file with dynamic buffer size
+- `write_manyfiles(dir_path, *, nfiles, mb_per_file, block_size=4096, qd=256, fsync_end=False)`: Write multiple files
 
-### 클래스
+### Classes
 
-- `UringCtx(entries=64)`: io_uring context 관리자
+- `UringCtx(entries=64)`: io_uring context manager
   
-  **동기 메서드:**
-  - `read(fd, length, offset=0)`: 동기 읽기
-  - `write(fd, data, offset=0)`: 동기 쓰기
-  - `read_batch(fd, block_size, blocks, offset=0)`: 배치 읽기
-  - `read_offsets(fd, block_size, offsets, *, offset_bytes=True)`: 여러 오프셋에서 읽기
+  **Synchronous methods:**
+  - `read(fd, length, offset=0)`: Synchronous read
+  - `write(fd, data, offset=0)`: Synchronous write
+  - `read_batch(fd, block_size, blocks, offset=0)`: Batch read
+  - `read_offsets(fd, block_size, offsets, *, offset_bytes=True)`: Read from multiple offsets
   
-  **비동기 메서드:**
-  - `read_async(fd, buf, offset=0, user_data=0)`: 비동기 읽기 제출
-  - `write_async(fd, data, offset=0, user_data=0)`: 비동기 쓰기 제출
-  - `read_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)`: 포인터를 사용한 비동기 읽기
-  - `write_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)`: 포인터를 사용한 비동기 쓰기
-  - `submit()`: 대기 중인 작업 제출
-  - `submit_and_wait(wait_nr=1)`: 제출 후 완료 대기
-  - `wait_completion()`: 완료 대기 (블로킹), `(user_data, result)` 튜플 반환
-  - `peek_completion()`: 완료 확인 (논블로킹), 완료가 있으면 `(user_data, result)` 튜플, 없으면 `None` 반환
+  **Asynchronous methods:**
+  - `read_async(fd, buf, offset=0, user_data=0)`: Submit asynchronous read
+  - `write_async(fd, data, offset=0, user_data=0)`: Submit asynchronous write
+  - `read_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)`: Asynchronous read using pointer
+  - `write_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)`: Asynchronous write using pointer
+  - `submit()`: Submit pending operations
+  - `submit_and_wait(wait_nr=1)`: Submit and wait for completion
+  - `wait_completion()`: Wait for completion (blocking), returns `(user_data, result)` tuple
+  - `peek_completion()`: Check for completion (non-blocking), returns `(user_data, result)` tuple if available, `None` otherwise
 
-- `BufferPool`: 동적 버퍼 크기 관리 풀
+- `BufferPool`: Dynamic buffer size management pool
   
-  **클래스 메서드:**
-  - `BufferPool.create(initial_count=8, initial_size=4096)`: 버퍼 풀 생성
+  **Class methods:**
+  - `BufferPool.create(initial_count=8, initial_size=4096)`: Create buffer pool
   
-  **인스턴스 메서드:**
-  - `resize(index, new_size)`: 버퍼 크기 동적 조정
-  - `get(index)`: 버퍼 데이터를 bytes로 반환
-  - `get_ptr(index)`: 버퍼 포인터와 크기를 `(ptr, size)` 튜플로 반환
-  - `set_size(index, size)`: 버퍼 크기 설정 (재할당 없음, capacity 이내)
-  - `close()`: 버퍼 풀 해제
+  **Instance methods:**
+  - `resize(index, new_size)`: Dynamically adjust buffer size
+  - `get(index)`: Return buffer data as bytes
+  - `get_ptr(index)`: Return buffer pointer and size as `(ptr, size)` tuple
+  - `set_size(index, size)`: Set buffer size (no reallocation, within capacity)
+  - `close()`: Release buffer pool
 
-### 예외
+### Exceptions
 
-- `UringError`: io_uring 관련 오류
+- `UringError`: io_uring related errors
 
-## 성능 팁
+## Performance Tips
 
-1. **Queue Depth (qd)**: 더 높은 qd는 더 많은 병렬 I/O를 허용하지만 메모리 사용량도 증가합니다.
-2. **Block Size**: 일반적으로 64KB~1MB가 좋은 성능을 보입니다.
-3. **동적 버퍼 크기**: 작은 버퍼로 시작하고 점진적으로 증가시키면 초기 지연을 줄이면서 전체 처리량을 향상시킬 수 있습니다.
-4. **fsync**: 데이터 무결성이 중요할 때만 사용하세요 (성능 저하).
+1. **Queue Depth (qd)**: Higher qd allows more parallel I/O but also increases memory usage.
+2. **Block Size**: Generally 64KB~1MB shows good performance.
+3. **Dynamic buffer size**: Starting with small buffers and gradually increasing can reduce initial latency while improving overall throughput.
+4. **fsync**: Only use when data integrity is important (performance degradation).
 
-## 추가 리소스
+## Additional Resources
 
-- [README.md](README.md): 프로젝트 개요
-- [INSTALLATION.md](INSTALLATION.md): 상세 설치 가이드
+- [README.md](README.md): Project overview
+- [INSTALLATION.md](INSTALLATION.md): Detailed installation guide
