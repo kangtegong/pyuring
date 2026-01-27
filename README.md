@@ -10,113 +10,30 @@ Python이 io_uring을 "직접" 지원하진 않아서, 보통은 **liburing(C)**
 - `python/demo_write_tmp.py`: 임시파일에 io_uring으로 쓰기
 - **동적 버퍼 크기 조정**: 런타임에 읽기/쓰기 버퍼 크기를 동적으로 조정하는 기능
 
-## 시작하기 (Quick Start)
+## 설치
 
-### 1. 저장소 클론
+자세한 설치 가이드는 [INSTALLATION.md](INSTALLATION.md)를 참조하세요.
 
-```bash
-git clone git@github.com:kangtegong/adaptive_buffering.git
-cd adaptive_buffering
-```
-
-또는 HTTPS를 사용하는 경우:
+### 빠른 시작
 
 ```bash
-git clone https://github.com/kangtegong/adaptive_buffering.git
-cd adaptive_buffering
-```
-
-### 2. Submodule 초기화 (필수)
-
-이 저장소는 `third_party/liburing`을 Git submodule로 관리합니다. 클론 후 submodule을 초기화해야 합니다:
-
-```bash
-# Submodule 초기화 및 다운로드
-git submodule update --init --recursive
-```
-
-또는 클론할 때 한 번에:
-
-```bash
+# 저장소 클론
 git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
 cd adaptive_buffering
-```
 
-### 3. 의존성 설치 및 빌드
-
-**옵션 A: 시스템에 liburing-dev 설치 (권장)**
-
-```bash
-# Ubuntu/Debian
-sudo apt-get update
+# 의존성 설치 (옵션 A: 시스템 라이브러리 사용)
 sudo apt-get install -y liburing-dev
-
-# 빌드
 make
-```
 
-**옵션 B: vendored liburing 사용 (sudo 권한 없을 때)**
-
-```bash
-# vendored liburing 빌드 (submodule로 이미 다운로드됨)
+# 또는 옵션 B: vendored liburing 사용
+make fetch-liburing
 make
-```
 
-**참고**: `third_party/liburing`은 Git submodule로 관리됩니다. 
-클론 후 `git submodule update --init --recursive`로 초기화하거나, 
-`make fetch-liburing`으로 직접 다운로드할 수도 있습니다.
-
-### 4. 빌드 확인
-
-빌드가 성공하면 `build/liburingwrap.so` 파일이 생성됩니다:
-
-```bash
-ls -lh build/liburingwrap.so
-```
-
-### 5. 간단한 테스트
-
-```bash
-# 파일 읽기 데모
+# 테스트
 python3 python/demo_read.py /etc/hosts 256
-
-# 동적 버퍼 크기로 파일 쓰기 데모
-python3 python/demo_dynamic_buffer.py /tmp/test.dat 10 4096
 ```
 
 ## 상세 가이드
-
-### 1) 의존성 설치 (Ubuntu)
-
-`liburing` 개발 헤더가 필요합니다.
-
-```bash
-sudo apt-get update
-sudo apt-get install -y liburing-dev
-```
-
-만약 `sudo` 권한이 없으면(예: 일반 유저/컨테이너), 이 레포에서 **liburing을 로컬로 vendoring** 해서 빌드할 수도 있습니다:
-
-```bash
-make fetch-liburing
-make
-```
-
-**참고**: `third_party/liburing`은 Git 저장소에 포함되지 않습니다 (`.gitignore`에 추가됨). 
-저장소를 클론한 후 위 명령어로 자동으로 다운로드됩니다.
-
-### 2) 빌드
-
-```bash
-make
-```
-
-성공하면 `build/liburingwrap.so`가 생깁니다.
-
-**빌드 문제 해결**:
-- `liburing-dev`가 설치되어 있으면 시스템 라이브러리를 사용합니다
-- 설치되어 있지 않으면 `make fetch-liburing`으로 자동 다운로드됩니다
-- 컴파일 오류가 발생하면 `gcc`, `make`가 설치되어 있는지 확인하세요
 
 ### 3) 실행
 
