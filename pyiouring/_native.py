@@ -2,9 +2,12 @@
 Native library bindings for io_uring operations.
 """
 
+from __future__ import annotations
+
 import ctypes
 import os
 import sys
+from typing import Tuple, Optional
 from ctypes import c_int, c_uint, c_longlong, c_void_p, c_char_p, CFUNCTYPE, c_uint64, POINTER, Structure, byref
 
 
@@ -282,7 +285,7 @@ class UringCtx:
         _raise_for_neg_errno(ret, "uring_write_async")
         return int(ret)
 
-    def wait_completion(self) -> tuple[int, int]:
+    def wait_completion(self) -> Tuple[int, int]:
         """
         Wait for a completion (blocking).
         
@@ -300,7 +303,7 @@ class UringCtx:
         _raise_for_neg_errno(ret, "uring_wait_completion")
         return (int(user_data.value), int(result.value))
 
-    def peek_completion(self) -> tuple[int, int] | None:
+    def peek_completion(self) -> Optional[Tuple[int, int]]:
         """
         Peek at a completion without waiting (non-blocking).
         
@@ -396,7 +399,7 @@ class BufferPool:
             raise UringError(f"Invalid buffer index: {index}")
         return ctypes.string_at(buf_ptr, size.value)
     
-    def get_ptr(self, index: int) -> tuple[ctypes.c_void_p, int]:
+    def get_ptr(self, index: int) -> Tuple[ctypes.c_void_p, int]:
         """Get buffer pointer and size (for use with async operations)."""
         size = c_uint()
         buf_ptr = self._lib.uring_buffer_pool_get(self._pool, index, byref(size))

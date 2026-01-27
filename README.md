@@ -97,6 +97,7 @@ with pyiouring.UringCtx(entries=64) as ctx:
 자세한 설치 및 사용 방법은 다음 문서를 참조하세요:
 - [INSTALLATION.md](INSTALLATION.md): 상세 설치 가이드
 - [USAGE.md](USAGE.md): 사용 가이드 및 API 참조
+- [examples/BENCHMARKS.md](examples/BENCHMARKS.md): 벤치마크 가이드
 
 ### 소스에서 빌드 (개발 모드)
 
@@ -113,68 +114,17 @@ make
 make fetch-liburing
 make
 
-# 테스트
-python3 python/demo_read.py /etc/hosts 256
 ```
 
-## 상세 가이드
+## 벤치마크
 
-### 3) 실행
-
-**파일 읽기:**
-```bash
-python3 examples/demo_read.py /etc/hosts 256
-```
-
-**파일 쓰기:**
-```bash
-python3 examples/demo_write_tmp.py
-```
-
-**파일 복사:**
-```bash
-python3 examples/demo_copy.py /tmp/src.dat /tmp/dst.dat --qd 32 --block-size 1048576
-```
-
-**비동기 API 데모:**
-```bash
-python3 examples/demo_async_api.py
-```
-
-### 4) 속도 비교(벤치마크)
-
-`sudo` 없이도 동작 가능한 형태로, **Python `os.pread` 루프(블록 단위) vs io_uring 배치 제출(C 래퍼)** 를 비교합니다.
+동기 vs 비동기 I/O 성능 비교:
 
 ```bash
-make fetch-liburing
-make
-python3 examples/bench_read.py --size-mb 256 --block-size 4096 --blocks 4096 --iters 20
-```
+# 기본 벤치마크
+python3 examples/bench_async_vs_sync.py
 
-주의: 권한상 drop_caches를 못 하기 때문에 보통 “페이지캐시 히트” 상태가 되어, 디스크 성능이 아니라 **Python 루프/시스템콜 오버헤드** 차이가 크게 반영됩니다.
-
-또 한 가지 중요한 점: 이 레포의 io_uring 래퍼는 “Python에서 io_uring을 호출해보기”에 초점을 둔 **간단한 구현**이라,
-페이지캐시 히트(메모리에서 읽힘) 같은 상황에선 오히려 `os.pread` 루프가 더 빠르게 나올 수 있습니다.
-
-io_uring이 유의미하게 이득을 보는 케이스는 보통:
-
-- **실제 디스크 I/O 지연이 있는 상황**(캐시 미스)에서
-- **여러 요청을 동시에(in-flight) 걸어** latency를 겹치거나
-- SQPOLL / 고정 버퍼/FD 등록 등으로 syscall/오버헤드를 더 줄였을 때
-
-**랜덤 읽기 벤치마크:**
-```bash
-python3 examples/bench_rand_read.py --size-mb 1024 --block-size 4096 --reads 256 --iters 30
-```
-
-**복사 벤치마크:**
-```bash
-python3 examples/bench_copy.py --size-mb 512 --qd 32 --uring-block-size 1048576 --block-size 65536
-```
-
-**새 파일 쓰기 벤치마크:**
-```bash
-python3 examples/bench_writev_newfile.py --total-mb 512 --block-size 4096 --vec 64 --repeats 7
+# 자세한 사용법은 examples/BENCHMARKS.md 참조
 ```
 
 ### 5) 동적 버퍼 크기 조정 (런타임)
@@ -184,7 +134,7 @@ io_uring에서 한 번에 읽어들이고 SSD에 write하는(flush하는) 버퍼
 `write_newfile_dynamic` 함수를 사용하면 각 write 전에 콜백 함수를 호출하여 버퍼 크기를 결정할 수 있습니다:
 
 ```python
-from uringwrap import write_newfile_dynamic
+import pyiouring
 
 def adaptive_size(current_offset, total_bytes, default_block_size):
     """진행 상황에 따라 버퍼 크기를 조정"""
@@ -199,7 +149,7 @@ def adaptive_size(current_offset, total_bytes, default_block_size):
         return default_block_size * 8  # 마지막 25%: 8배
 
 # 동적 버퍼 크기로 파일 쓰기
-written = write_newfile_dynamic(
+written = pyiouring.write_newfile_dynamic(
     "/tmp/test.dat",
     total_mb=100,
     block_size=4096,  # 기본 블록 크기
@@ -209,18 +159,12 @@ written = write_newfile_dynamic(
 )
 ```
 
-데모 스크립트 실행:
-
-```bash
-python3 examples/demo_dynamic_buffer.py /tmp/test.dat 100 4096
-```
-
 ### 읽기+쓰기 복사에서 동적 버퍼 크기 조정
 
 파일을 읽어서 다른 파일로 복사할 때도 동적으로 버퍼 크기를 조정할 수 있습니다:
 
 ```python
-from uringwrap import copy_path_dynamic
+import pyiouring
 
 def adaptive_size(current_offset, total_bytes, default_block_size):
     """진행 상황에 따라 버퍼 크기 조정"""
@@ -235,7 +179,7 @@ def adaptive_size(current_offset, total_bytes, default_block_size):
         return default_block_size * 8  # 마지막 25%: 8배 (SSD flush 효율)
 
 # 동적 버퍼 크기로 파일 복사 (읽기+쓰기)
-copied = copy_path_dynamic(
+copied = pyiouring.copy_path_dynamic(
     "/tmp/source.dat",
     "/tmp/dest.dat",
     qd=32,
@@ -245,27 +189,10 @@ copied = copy_path_dynamic(
 )
 ```
 
-데모 스크립트 실행:
-
-```bash
-# 소스 파일 생성 (테스트용)
-dd if=/dev/urandom of=/tmp/source.dat bs=1M count=100
-
-# 동적 버퍼 크기로 복사
-python3 examples/demo_copy_dynamic.py /tmp/source.dat /tmp/dest.dat adaptive
-```
-
-사용 가능한 전략:
-- `adaptive`: 점진적으로 버퍼 크기 증가 (기본값)
-- `linear`: 1x에서 16x까지 선형 증가
-- `stepwise`: 특정 임계값에서 단계적 증가
-- `fixed`: 고정 블록 크기 (동적 조정 없음)
-
 이 기능을 사용하면:
 - **작은 버퍼로 시작**하여 초기 지연 시간을 줄이고
 - **진행하면서 버퍼 크기를 증가**시켜 전체 처리량을 향상시킬 수 있습니다
 - **SSD flush 효율**을 높이기 위해 마지막 부분에서 큰 버퍼를 사용할 수 있습니다
-- **작업 부하나 시스템 상태에 따라** 버퍼 크기를 동적으로 조정할 수 있습니다
 
 ## 주요 기능
 
