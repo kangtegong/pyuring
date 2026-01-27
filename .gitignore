@@ -1,0 +1,33 @@
+# Build artifacts
+build/
+*.so
+*.a
+*.o
+*.d
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+
+# IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Third party (managed via submodule or fetched via make)
+third_party/liburing/
+
+# Test files
+/tmp/
+*.dat
+*.tmp
+
