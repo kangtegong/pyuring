@@ -11,18 +11,11 @@ This document explains how to install and build the adaptive_buffering project s
 5. [Build](#build)
 6. [Verify Build](#verify-build)
 7. [Simple Tests](#simple-tests)
-8. [Troubleshooting](#troubleshooting)
 
 ## Install as Python Package (Recommended)
 
 ### 1. Clone Repository
 
-```bash
-git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
-cd adaptive_buffering
-```
-
-Or using HTTPS:
 
 ```bash
 git clone --recursive https://github.com/kangtegong/adaptive_buffering.git
@@ -340,162 +333,6 @@ python3 examples/bench_async_vs_sync.py --num-files 20 --file-size-mb 5
 
 # See examples/BENCHMARKS.md for detailed benchmark guide
 ```
-
-## Troubleshooting
-
-### Build Errors
-
-**Problem**: `liburing.h: No such file or directory`
-
-**Solution**:
-- Check if `liburing-dev` is installed on the system: `dpkg -l | grep liburing-dev`
-- Or use vendored liburing with `make fetch-liburing`
-
-**Problem**: `gcc: command not found`
-
-**Solution**:
-```bash
-# Ubuntu/Debian
-sudo apt-get install build-essential
-
-# Fedora/RHEL
-sudo dnf groupinstall "Development Tools"
-```
-
-**Problem**: `make: command not found`
-
-**Solution**:
-```bash
-# Ubuntu/Debian
-sudo apt-get install make
-
-# Fedora/RHEL
-sudo dnf install make
-```
-
-### Submodule Issues
-
-**Problem**: `third_party/liburing` is empty
-
-**Solution**:
-```bash
-git submodule update --init --recursive
-```
-
-**Problem**: `make` fails with "fetch-liburing" error: "destination path already exists"
-
-**Solution**: This happens when the submodule directory exists but `make` tries to clone it again. Build directly:
-
-```bash
-# Option 1: Build liburing first, then the main library
-cd third_party/liburing
-make
-cd ../..
-make
-
-# Option 2: Build directly with gcc (skip Makefile's fetch-liburing)
-mkdir -p build
-gcc -O2 -g -Wall -Wextra -fPIC \
-    -Ithird_party/liburing/src/include \
-    -shared \
-    -o build/liburingwrap.so \
-    csrc/uring_wrap.c csrc/bench_direct.c \
-    third_party/liburing/src/liburing.a
-```
-
-**Problem**: Build fails after submodule update
-
-**Solution**:
-```bash
-# Reinitialize submodule
-git submodule deinit -f third_party/liburing
-git submodule update --init --recursive
-
-# Rebuild liburing
-cd third_party/liburing
-make clean
-make
-cd ../..
-
-# Rebuild main library
-make
-```
-
-### Python Issues
-
-**Problem**: `ModuleNotFoundError: No module named 'pyiouring'`
-
-**Solution**:
-- Check if package is properly installed: `pip list | grep pyiouring`
-- Reinstall in development mode: `pip install -e .`
-- Or set `PYTHONPATH` environment variable:
-  ```bash
-  export PYTHONPATH=$PWD:$PYTHONPATH
-  ```
-
-**Problem**: `UringError: liburingwrap.so not found`
-
-**Solution**:
-1. Ensure submodule is initialized:
-   ```bash
-   git submodule update --init --recursive
-   ```
-
-2. Build liburing (if using vendored liburing):
-   ```bash
-   cd third_party/liburing
-   make
-   cd ../..
-   ```
-
-3. Build native library:
-   ```bash
-   make
-   # Or if make fails, build directly:
-   mkdir -p build
-   gcc -O2 -g -Wall -Wextra -fPIC \
-       -Ithird_party/liburing/src/include \
-       -shared \
-       -o build/liburingwrap.so \
-       csrc/uring_wrap.c csrc/bench_direct.c \
-       third_party/liburing/src/liburing.a
-   ```
-
-4. Verify build:
-   ```bash
-   ls -la build/liburingwrap.so
-   ```
-
-5. For development mode, copy to package directory:
-   ```bash
-   mkdir -p pyiouring/lib
-   cp build/liburingwrap.so pyiouring/lib/
-   ```
-
-6. Reinstall:
-   ```bash
-   pip install -e . --force-reinstall --no-cache-dir
-   ```
-
-**Problem**: `OSError: liburing.so.2: cannot open shared object file`
-
-**Solution**:
-- Check if `liburing` library is installed on the system
-- Or build to use vendored liburing
-
-### Runtime Errors
-
-**Problem**: `io_uring_setup failed: Operation not permitted`
-
-**Solution**:
-- Check kernel version: `uname -r` (5.15 or higher required)
-- Check io_uring support: `ls /sys/fs/io_uring/`
-
-**Problem**: `uring_create failed (NULL)`
-
-**Solution**:
-- Check if kernel supports io_uring
-- May be a permission issue (some systems require specific permissions)
 
 ## Additional Information
 
