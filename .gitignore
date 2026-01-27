@@ -5,6 +5,12 @@ build/
 *.o
 *.d
 
+# Python package build
+pyiouring/lib/liburingwrap.so
+dist/
+*.egg-info/
+.eggs/
+
 # Python
 __pycache__/
 *.py[cod]
