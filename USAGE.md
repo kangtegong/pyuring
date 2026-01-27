@@ -127,7 +127,7 @@ with pyiouring.UringCtx(entries=64) as ctx:
     # 파일 열기
     fd = os.open("/tmp/test.dat", os.O_RDONLY)
     try:
-        # 읽기
+        # 동기 읽기
         data = ctx.read(fd, length=4096, offset=0)
         print(f"Read {len(data)} bytes")
         
@@ -141,6 +141,166 @@ with pyiouring.UringCtx(entries=64) as ctx:
         print(f"Read {len(data)} bytes from {len(offsets)} offsets")
     finally:
         os.close(fd)
+```
+
+### 비동기 읽기/쓰기 API
+
+io_uring의 비동기 기능을 직접 사용하려면:
+
+```python
+import os
+import pyiouring
+
+with pyiouring.UringCtx(entries=64) as ctx:
+    fd = os.open("/tmp/test.dat", os.O_RDONLY)
+    try:
+        # 비동기 읽기 제출
+        buf = bytearray(4096)
+        ctx.read_async(fd, buf, offset=0, user_data=1)
+        
+        # 작업 제출
+        ctx.submit()
+        
+        # 완료 대기 (블로킹)
+        user_data, result = ctx.wait_completion()
+        print(f"Read {result} bytes (user_data={user_data})")
+        
+        # 또는 논블로킹으로 확인
+        completion = ctx.peek_completion()
+        if completion:
+            user_data, result = completion
+            print(f"Read {result} bytes")
+    finally:
+        os.close(fd)
+```
+
+비동기 쓰기:
+
+```python
+with pyiouring.UringCtx(entries=64) as ctx:
+    fd = os.open("/tmp/test.dat", os.O_CREAT | os.O_WRONLY | os.O_TRUNC, 0o644)
+    try:
+        # 여러 쓰기 작업 제출
+        data1 = b"Chunk 1"
+        data2 = b"Chunk 2"
+        data3 = b"Chunk 3"
+        
+        ctx.write_async(fd, data1, offset=0, user_data=1)
+        ctx.write_async(fd, data2, offset=len(data1), user_data=2)
+        ctx.write_async(fd, data3, offset=len(data1)+len(data2), user_data=3)
+        
+        # 모든 작업 제출
+        ctx.submit()
+        
+        # 모든 완료 대기
+        for _ in range(3):
+            user_data, result = ctx.wait_completion()
+            print(f"Write {user_data}: {result} bytes written")
+    finally:
+        os.close(fd)
+```
+
+### 동적 버퍼 풀 (BufferPool)
+
+동적으로 버퍼 크기를 조정하면서 비동기 I/O를 수행:
+
+```python
+import os
+import pyiouring
+
+with pyiouring.UringCtx(entries=64) as ctx:
+    # 버퍼 풀 생성 (4개 버퍼, 각 4KB로 시작)
+    with pyiouring.BufferPool.create(initial_count=4, initial_size=4096) as pool:
+        fd = os.open("/tmp/test.dat", os.O_RDONLY)
+        try:
+            # 첫 번째 읽기: 4KB
+            buf_ptr, buf_size = pool.get_ptr(0)
+            pool.set_size(0, 4096)
+            ctx.read_async_ptr(fd, buf_ptr, 4096, offset=0, user_data=1)
+            
+            # 두 번째 읽기: 버퍼 크기를 8KB로 조정
+            pool.resize(1, 8192)
+            buf_ptr, buf_size = pool.get_ptr(1)
+            pool.set_size(1, 8192)
+            ctx.read_async_ptr(fd, buf_ptr, 8192, offset=4096, user_data=2)
+            
+            # 세 번째 읽기: 버퍼 크기를 16KB로 조정
+            pool.resize(2, 16384)
+            buf_ptr, buf_size = pool.get_ptr(2)
+            pool.set_size(2, 16384)
+            ctx.read_async_ptr(fd, buf_ptr, 16384, offset=12288, user_data=3)
+            
+            # 모든 작업 제출
+            ctx.submit()
+            
+            # 완료 처리
+            for _ in range(3):
+                user_data, result = ctx.wait_completion()
+                print(f"Read {user_data}: {result} bytes")
+                
+                # 버퍼 데이터 읽기
+                if user_data == 1:
+                    data = pool.get(0)
+                elif user_data == 2:
+                    data = pool.get(1)
+                elif user_data == 3:
+                    data = pool.get(2)
+                print(f"Buffer data: {data[:50]}...")
+        finally:
+            os.close(fd)
+```
+
+적응형 버퍼 크기 조정 예제:
+
+```python
+def adaptive_read_with_pool(ctx, fd, file_size, pool):
+    """파일 위치에 따라 버퍼 크기를 동적으로 조정하며 읽기"""
+    offset = 0
+    user_data = 1
+    slot = 0
+    
+    while offset < file_size:
+        # 진행 상황에 따라 버퍼 크기 결정
+        progress = offset / file_size
+        if progress < 0.25:
+            buf_size = 4096
+            target_slot = 0
+        elif progress < 0.5:
+            buf_size = 8192
+            target_slot = 1
+        elif progress < 0.75:
+            buf_size = 16384
+            target_slot = 2
+        else:
+            buf_size = 32768
+            target_slot = 3
+        
+        # 버퍼 크기 조정
+        pool.resize(target_slot, buf_size)
+        pool.set_size(target_slot, min(buf_size, file_size - offset))
+        
+        # 비동기 읽기 제출
+        buf_ptr, _ = pool.get_ptr(target_slot)
+        ctx.read_async_ptr(fd, buf_ptr, min(buf_size, file_size - offset), 
+                          offset=offset, user_data=user_data)
+        
+        offset += buf_size
+        user_data += 1
+        
+        # 주기적으로 제출
+        if user_data % 8 == 0:
+            ctx.submit()
+    
+    # 남은 작업 제출
+    ctx.submit()
+    
+    # 모든 완료 대기
+    results = []
+    for _ in range(user_data - 1):
+        user_data_result, result = ctx.wait_completion()
+        results.append((user_data_result, result))
+    
+    return results
 ```
 
 ## 에러 처리
@@ -233,10 +393,34 @@ print(f"Total written: {total_written:,} bytes")
 ### 클래스
 
 - `UringCtx(entries=64)`: io_uring context 관리자
-  - `read(fd, length, offset=0)`: 읽기
-  - `write(fd, data, offset=0)`: 쓰기
+  
+  **동기 메서드:**
+  - `read(fd, length, offset=0)`: 동기 읽기
+  - `write(fd, data, offset=0)`: 동기 쓰기
   - `read_batch(fd, block_size, blocks, offset=0)`: 배치 읽기
   - `read_offsets(fd, block_size, offsets, *, offset_bytes=True)`: 여러 오프셋에서 읽기
+  
+  **비동기 메서드:**
+  - `read_async(fd, buf, offset=0, user_data=0)`: 비동기 읽기 제출
+  - `write_async(fd, data, offset=0, user_data=0)`: 비동기 쓰기 제출
+  - `read_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)`: 포인터를 사용한 비동기 읽기
+  - `write_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)`: 포인터를 사용한 비동기 쓰기
+  - `submit()`: 대기 중인 작업 제출
+  - `submit_and_wait(wait_nr=1)`: 제출 후 완료 대기
+  - `wait_completion()`: 완료 대기 (블로킹), `(user_data, result)` 튜플 반환
+  - `peek_completion()`: 완료 확인 (논블로킹), 완료가 있으면 `(user_data, result)` 튜플, 없으면 `None` 반환
+
+- `BufferPool`: 동적 버퍼 크기 관리 풀
+  
+  **클래스 메서드:**
+  - `BufferPool.create(initial_count=8, initial_size=4096)`: 버퍼 풀 생성
+  
+  **인스턴스 메서드:**
+  - `resize(index, new_size)`: 버퍼 크기 동적 조정
+  - `get(index)`: 버퍼 데이터를 bytes로 반환
+  - `get_ptr(index)`: 버퍼 포인터와 크기를 `(ptr, size)` 튜플로 반환
+  - `set_size(index, size)`: 버퍼 크기 설정 (재할당 없음, capacity 이내)
+  - `close()`: 버퍼 풀 해제
 
 ### 예외
 
@@ -253,4 +437,3 @@ print(f"Total written: {total_written:,} bytes")
 
 - [README.md](README.md): 프로젝트 개요
 - [INSTALLATION.md](INSTALLATION.md): 상세 설치 가이드
-

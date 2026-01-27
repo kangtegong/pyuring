@@ -5,7 +5,10 @@ Demo script showing dynamic buffer size adjustment in io_uring writes.
 
 import os
 import sys
-from uringwrap import write_newfile_dynamic, UringError
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pyiouring import write_newfile_dynamic, UringError
 
 
 def adaptive_buffer_size(current_offset: int, total_bytes: int, default_block_size: int) -> int:

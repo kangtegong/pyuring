@@ -8,6 +8,7 @@ dynamically adjusting buffer sizes at runtime.
 from pyiouring._native import (
     UringError,
     UringCtx,
+    BufferPool,
     copy_path,
     copy_path_dynamic,
     write_newfile,
@@ -19,6 +20,7 @@ __version__ = "0.1.0"
 __all__ = [
     "UringError",
     "UringCtx",
+    "BufferPool",
     "copy_path",
     "copy_path_dynamic",
     "write_newfile",

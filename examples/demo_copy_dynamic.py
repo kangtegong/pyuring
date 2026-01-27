@@ -8,7 +8,10 @@ to SSD, allowing for adaptive flush sizes based on progress or other factors.
 import os
 import sys
 import time
-from uringwrap import copy_path_dynamic, UringError
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pyiouring import copy_path_dynamic, UringError
 
 
 def adaptive_buffer_size(current_offset: int, total_bytes: int, default_block_size: int) -> int:

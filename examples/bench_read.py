@@ -2,7 +2,10 @@ import argparse
 import os
 import time
 
-from python.uringwrap import UringCtx
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pyiouring import UringCtx
 
 
 def human_mb_per_s(nbytes: int, seconds: float) -> float:

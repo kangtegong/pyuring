@@ -5,7 +5,10 @@ import statistics
 import time
 from concurrent.futures import ThreadPoolExecutor
 
-from python.uringwrap import write_manyfiles
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pyiouring import write_manyfiles
 
 
 def mb_s(nbytes: int, seconds: float) -> float:

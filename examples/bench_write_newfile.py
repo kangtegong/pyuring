@@ -3,7 +3,10 @@ import os
 import statistics
 import time
 
-from python.uringwrap import write_newfile
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pyiouring import write_newfile
 
 
 def mb_s(nbytes: int, seconds: float) -> float:

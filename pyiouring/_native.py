@@ -5,7 +5,7 @@ Native library bindings for io_uring operations.
 import ctypes
 import os
 import sys
-from ctypes import c_int, c_uint, c_longlong, c_void_p, c_char_p, CFUNCTYPE
+from ctypes import c_int, c_uint, c_longlong, c_void_p, c_char_p, CFUNCTYPE, c_uint64, POINTER, Structure, byref
 
 
 class UringError(RuntimeError):
@@ -82,6 +82,41 @@ class UringCtx:
         self._lib.uring_copy_path.argtypes = [c_char_p, c_char_p, c_uint, c_uint]
         self._lib.uring_copy_path.restype = c_longlong
 
+        # Async API bindings
+        self._lib.uring_read_async.argtypes = [c_void_p, c_int, c_void_p, c_uint, c_longlong, c_uint64]
+        self._lib.uring_read_async.restype = c_longlong
+
+        self._lib.uring_write_async.argtypes = [c_void_p, c_int, c_void_p, c_uint, c_longlong, c_uint64]
+        self._lib.uring_write_async.restype = c_longlong
+
+        self._lib.uring_wait_completion.argtypes = [c_void_p, POINTER(c_uint64), POINTER(c_int)]
+        self._lib.uring_wait_completion.restype = c_int
+
+        self._lib.uring_peek_completion.argtypes = [c_void_p, POINTER(c_uint64), POINTER(c_int)]
+        self._lib.uring_peek_completion.restype = c_int
+
+        self._lib.uring_submit.argtypes = [c_void_p]
+        self._lib.uring_submit.restype = c_int
+
+        self._lib.uring_submit_and_wait.argtypes = [c_void_p, c_uint]
+        self._lib.uring_submit_and_wait.restype = c_int
+
+        # Buffer pool API bindings
+        self._lib.uring_buffer_pool_create.argtypes = [c_uint, c_uint]
+        self._lib.uring_buffer_pool_create.restype = c_void_p
+
+        self._lib.uring_buffer_pool_destroy.argtypes = [c_void_p]
+        self._lib.uring_buffer_pool_destroy.restype = None
+
+        self._lib.uring_buffer_pool_resize.argtypes = [c_void_p, c_uint, c_uint]
+        self._lib.uring_buffer_pool_resize.restype = c_int
+
+        self._lib.uring_buffer_pool_get.argtypes = [c_void_p, c_uint, POINTER(c_uint)]
+        self._lib.uring_buffer_pool_get.restype = c_void_p
+
+        self._lib.uring_buffer_pool_set_size.argtypes = [c_void_p, c_uint, c_uint]
+        self._lib.uring_buffer_pool_set_size.restype = c_int
+
         ctx = self._lib.uring_create(entries)
         if not ctx:
             raise UringError(
@@ -143,6 +178,248 @@ class UringCtx:
         )
         _raise_for_neg_errno(ret, "uring_read_offsets_sync")
         return buf.raw[:ret]
+
+    # ========================================================================
+    # Asynchronous API
+    # ========================================================================
+
+    def read_async(self, fd: int, buf, offset: int = 0, user_data: int = 0) -> int:
+        """
+        Submit an asynchronous read operation.
+        
+        Args:
+            fd: File descriptor
+            buf: Buffer to read into. Can be:
+                - bytes/bytearray: will be used directly
+                - tuple (ptr, size): from BufferPool.get_ptr()
+            offset: File offset
+            user_data: User data tag to identify this operation (default: 0)
+        
+        Returns:
+            user_data tag on success, raises UringError on error
+        """
+        if isinstance(buf, tuple) and len(buf) == 2:
+            # Tuple from BufferPool.get_ptr() - use read_async_ptr instead
+            return self.read_async_ptr(fd, buf[0], buf[1], offset, user_data)
+        elif isinstance(buf, (bytes, bytearray)):
+            # Create a mutable buffer
+            if isinstance(buf, bytes):
+                buf = bytearray(buf)
+            buf_ptr = (ctypes.c_char * len(buf)).from_buffer(buf)
+            buf_len = len(buf)
+        else:
+            raise TypeError(f"buf must be bytes, bytearray, or tuple (ptr, size), got {type(buf)}")
+        
+        ret = self._lib.uring_read_async(self._ctx, fd, buf_ptr, buf_len, offset, user_data)
+        _raise_for_neg_errno(ret, "uring_read_async")
+        return int(ret)
+
+    def read_async_ptr(self, fd: int, buf_ptr: ctypes.c_void_p, buf_len: int, offset: int = 0, user_data: int = 0) -> int:
+        """
+        Submit an asynchronous read operation using a raw pointer.
+        
+        Args:
+            fd: File descriptor
+            buf_ptr: Raw buffer pointer (c_void_p or from BufferPool.get_ptr())
+            buf_len: Buffer length
+            offset: File offset
+            user_data: User data tag to identify this operation (default: 0)
+        
+        Returns:
+            user_data tag on success, raises UringError on error
+        """
+        if isinstance(buf_ptr, tuple):
+            buf_ptr, buf_len = buf_ptr
+        elif not isinstance(buf_ptr, ctypes.c_void_p):
+            buf_ptr = ctypes.c_void_p(buf_ptr)
+        
+        ret = self._lib.uring_read_async(self._ctx, fd, buf_ptr, buf_len, offset, user_data)
+        _raise_for_neg_errno(ret, "uring_read_async")
+        return int(ret)
+
+    def write_async(self, fd: int, data: bytes, offset: int = 0, user_data: int = 0) -> int:
+        """
+        Submit an asynchronous write operation.
+        
+        Args:
+            fd: File descriptor
+            data: Data to write (bytes or bytearray)
+            offset: File offset
+            user_data: User data tag to identify this operation (default: 0)
+        
+        Returns:
+            user_data tag on success, raises UringError on error
+        """
+        if not isinstance(data, (bytes, bytearray)):
+            raise TypeError("data must be bytes or bytearray")
+        
+        # For write, we can use c_char_p since we're not modifying the data
+        buf_ptr = ctypes.c_char_p(data) if isinstance(data, bytes) else (ctypes.c_char * len(data)).from_buffer(data)
+        ret = self._lib.uring_write_async(self._ctx, fd, buf_ptr, len(data), offset, user_data)
+        _raise_for_neg_errno(ret, "uring_write_async")
+        return int(ret)
+
+    def write_async_ptr(self, fd: int, buf_ptr: ctypes.c_void_p, buf_len: int, offset: int = 0, user_data: int = 0) -> int:
+        """
+        Submit an asynchronous write operation using a raw pointer.
+        
+        Args:
+            fd: File descriptor
+            buf_ptr: Raw buffer pointer (c_void_p or from BufferPool.get_ptr())
+            buf_len: Buffer length
+            offset: File offset
+            user_data: User data tag to identify this operation (default: 0)
+        
+        Returns:
+            user_data tag on success, raises UringError on error
+        """
+        if isinstance(buf_ptr, tuple):
+            buf_ptr, buf_len = buf_ptr
+        elif not isinstance(buf_ptr, ctypes.c_void_p):
+            buf_ptr = ctypes.c_void_p(buf_ptr)
+        
+        ret = self._lib.uring_write_async(self._ctx, fd, buf_ptr, buf_len, offset, user_data)
+        _raise_for_neg_errno(ret, "uring_write_async")
+        return int(ret)
+
+    def wait_completion(self) -> tuple[int, int]:
+        """
+        Wait for a completion (blocking).
+        
+        Returns:
+            Tuple of (user_data, result) where:
+            - user_data: The user_data tag passed to read_async/write_async
+            - result: Bytes read/written (>=0) or negative errno on error
+        
+        Raises:
+            UringError on error
+        """
+        user_data = c_uint64()
+        result = c_int()
+        ret = self._lib.uring_wait_completion(self._ctx, byref(user_data), byref(result))
+        _raise_for_neg_errno(ret, "uring_wait_completion")
+        return (int(user_data.value), int(result.value))
+
+    def peek_completion(self) -> tuple[int, int] | None:
+        """
+        Peek at a completion without waiting (non-blocking).
+        
+        Returns:
+            Tuple of (user_data, result) if completion available, None otherwise
+            - user_data: The user_data tag passed to read_async/write_async
+            - result: Bytes read/written (>=0) or negative errno on error
+        
+        Raises:
+            UringError on error
+        """
+        user_data = c_uint64()
+        result = c_int()
+        ret = self._lib.uring_peek_completion(self._ctx, byref(user_data), byref(result))
+        if ret == 0:
+            return None  # No completion available
+        _raise_for_neg_errno(ret, "uring_peek_completion")
+        return (int(user_data.value), int(result.value))
+
+    def submit(self) -> int:
+        """
+        Submit all queued operations.
+        
+        Returns:
+            Number of operations submitted
+        
+        Raises:
+            UringError on error
+        """
+        ret = self._lib.uring_submit(self._ctx)
+        _raise_for_neg_errno(ret, "uring_submit")
+        return int(ret)
+
+    def submit_and_wait(self, wait_nr: int = 1) -> int:
+        """
+        Wait for at least 'wait_nr' completions, then submit any queued operations.
+        
+        Args:
+            wait_nr: Number of completions to wait for
+        
+        Returns:
+            Number of operations submitted
+        
+        Raises:
+            UringError on error
+        """
+        ret = self._lib.uring_submit_and_wait(self._ctx, wait_nr)
+        _raise_for_neg_errno(ret, "uring_submit_and_wait")
+        return int(ret)
+
+
+class BufferPool:
+    """Buffer pool for dynamic buffer size management."""
+    
+    def __init__(self, lib, pool_ptr: c_void_p):
+        self._lib = lib
+        self._pool = pool_ptr
+    
+    @classmethod
+    def create(cls, initial_count: int = 8, initial_size: int = 4096):
+        """Create a new buffer pool."""
+        lib = _get_lib()
+        lib.uring_buffer_pool_create.argtypes = [c_uint, c_uint]
+        lib.uring_buffer_pool_create.restype = c_void_p
+        
+        lib.uring_buffer_pool_destroy.argtypes = [c_void_p]
+        lib.uring_buffer_pool_destroy.restype = None
+        
+        lib.uring_buffer_pool_resize.argtypes = [c_void_p, c_uint, c_uint]
+        lib.uring_buffer_pool_resize.restype = c_int
+        
+        lib.uring_buffer_pool_get.argtypes = [c_void_p, c_uint, POINTER(c_uint)]
+        lib.uring_buffer_pool_get.restype = c_void_p
+        
+        lib.uring_buffer_pool_set_size.argtypes = [c_void_p, c_uint, c_uint]
+        lib.uring_buffer_pool_set_size.restype = c_int
+        
+        pool_ptr = lib.uring_buffer_pool_create(initial_count, initial_size)
+        if not pool_ptr:
+            raise UringError("Failed to create buffer pool")
+        return cls(lib, pool_ptr)
+    
+    def resize(self, index: int, new_size: int) -> None:
+        """Resize a buffer in the pool."""
+        ret = self._lib.uring_buffer_pool_resize(self._pool, index, new_size)
+        _raise_for_neg_errno(ret, "uring_buffer_pool_resize")
+    
+    def get(self, index: int) -> bytes:
+        """Get buffer data as bytes."""
+        size = c_uint()
+        buf_ptr = self._lib.uring_buffer_pool_get(self._pool, index, byref(size))
+        if not buf_ptr:
+            raise UringError(f"Invalid buffer index: {index}")
+        return ctypes.string_at(buf_ptr, size.value)
+    
+    def get_ptr(self, index: int) -> tuple[ctypes.c_void_p, int]:
+        """Get buffer pointer and size (for use with async operations)."""
+        size = c_uint()
+        buf_ptr = self._lib.uring_buffer_pool_get(self._pool, index, byref(size))
+        if not buf_ptr:
+            raise UringError(f"Invalid buffer index: {index}")
+        return (buf_ptr, int(size.value))
+    
+    def set_size(self, index: int, size: int) -> None:
+        """Set buffer size without reallocation (must be <= capacity)."""
+        ret = self._lib.uring_buffer_pool_set_size(self._pool, index, size)
+        _raise_for_neg_errno(ret, "uring_buffer_pool_set_size")
+    
+    def close(self) -> None:
+        """Destroy the buffer pool."""
+        if self._pool:
+            self._lib.uring_buffer_pool_destroy(self._pool)
+            self._pool = None
+    
+    def __enter__(self):
+        return self
+    
+    def __exit__(self, exc_type, exc, tb):
+        self.close()
 
 
 def _get_lib():

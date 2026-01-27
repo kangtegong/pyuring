@@ -1,12 +1,10 @@
 import os
 import tempfile
 
-try:
-    # When executed as a module: `python3 -m python.demo_write_tmp`
-    from .uringwrap import UringCtx  # type: ignore
-except ImportError:
-    # When executed as a script: `python3 python/demo_write_tmp.py`
-    from uringwrap import UringCtx
+import sys
+import os
+sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
+from pyiouring import UringCtx
 
 
 def main() -> int:

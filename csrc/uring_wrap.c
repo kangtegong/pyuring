@@ -6,6 +6,7 @@
 #include <stdint.h>
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
 #include <unistd.h>
@@ -99,6 +100,249 @@ int uring_write_sync(uring_ctx *ctx, int fd, const void *buf, unsigned len, long
   int res = cqe->res;
   io_uring_cqe_seen(&ctx->ring, cqe);
   return res;
+}
+
+// ============================================================================
+// Asynchronous API with dynamic buffer size support
+// ============================================================================
+
+typedef struct uring_buffer_pool {
+  void **buffers;
+  unsigned *buffer_sizes;
+  unsigned *buffer_capacities;
+  unsigned count;
+  unsigned max_capacity;
+} uring_buffer_pool;
+
+// Create a buffer pool for dynamic buffer management
+// Returns NULL on error (errno set)
+uring_buffer_pool *uring_buffer_pool_create(unsigned initial_count, unsigned initial_size) {
+  uring_buffer_pool *pool = (uring_buffer_pool *)calloc(1, sizeof(*pool));
+  if (!pool) {
+    return NULL;
+  }
+  
+  pool->count = initial_count;
+  pool->max_capacity = initial_size;
+  pool->buffers = (void **)calloc(initial_count, sizeof(void *));
+  pool->buffer_sizes = (unsigned *)calloc(initial_count, sizeof(unsigned));
+  pool->buffer_capacities = (unsigned *)calloc(initial_count, sizeof(unsigned));
+  
+  if (!pool->buffers || !pool->buffer_sizes || !pool->buffer_capacities) {
+    free(pool->buffers);
+    free(pool->buffer_sizes);
+    free(pool->buffer_capacities);
+    free(pool);
+    return NULL;
+  }
+  
+  // Allocate aligned buffers
+  for (unsigned i = 0; i < initial_count; i++) {
+    void *p = NULL;
+    if (posix_memalign(&p, 4096, initial_size) != 0) {
+      // Cleanup on failure
+      for (unsigned j = 0; j < i; j++) {
+        free(pool->buffers[j]);
+      }
+      free(pool->buffers);
+      free(pool->buffer_sizes);
+      free(pool->buffer_capacities);
+      free(pool);
+      return NULL;
+    }
+    pool->buffers[i] = p;
+    pool->buffer_sizes[i] = 0;
+    pool->buffer_capacities[i] = initial_size;
+  }
+  
+  return pool;
+}
+
+// Resize a buffer in the pool
+// Returns 0 on success, negative errno on error
+int uring_buffer_pool_resize(uring_buffer_pool *pool, unsigned index, unsigned new_size) {
+  if (!pool || index >= pool->count) {
+    return -EINVAL;
+  }
+  
+  if (new_size <= pool->buffer_capacities[index]) {
+    // Can use existing buffer
+    pool->buffer_sizes[index] = new_size;
+    return 0;
+  }
+  
+  // Need to reallocate
+  void *new_buf = NULL;
+  if (posix_memalign(&new_buf, 4096, new_size) != 0) {
+    return -ENOMEM;
+  }
+  
+  // Copy old data if any
+  if (pool->buffers[index] && pool->buffer_sizes[index] > 0) {
+    unsigned copy_size = pool->buffer_sizes[index];
+    if (copy_size > new_size) {
+      copy_size = new_size;
+    }
+    memcpy(new_buf, pool->buffers[index], copy_size);
+  }
+  
+  free(pool->buffers[index]);
+  pool->buffers[index] = new_buf;
+  pool->buffer_sizes[index] = new_size;
+  pool->buffer_capacities[index] = new_size;
+  
+  if (new_size > pool->max_capacity) {
+    pool->max_capacity = new_size;
+  }
+  
+  return 0;
+}
+
+// Get buffer pointer and size
+void *uring_buffer_pool_get(uring_buffer_pool *pool, unsigned index, unsigned *size) {
+  if (!pool || index >= pool->count) {
+    if (size) *size = 0;
+    return NULL;
+  }
+  if (size) *size = pool->buffer_sizes[index];
+  return pool->buffers[index];
+}
+
+// Set buffer size (without reallocation, must be <= capacity)
+int uring_buffer_pool_set_size(uring_buffer_pool *pool, unsigned index, unsigned size) {
+  if (!pool || index >= pool->count || size > pool->buffer_capacities[index]) {
+    return -EINVAL;
+  }
+  pool->buffer_sizes[index] = size;
+  return 0;
+}
+
+void uring_buffer_pool_destroy(uring_buffer_pool *pool) {
+  if (!pool) {
+    return;
+  }
+  if (pool->buffers) {
+    for (unsigned i = 0; i < pool->count; i++) {
+      if (pool->buffers[i]) {
+        free(pool->buffers[i]);
+      }
+    }
+    free(pool->buffers);
+  }
+  free(pool->buffer_sizes);
+  free(pool->buffer_capacities);
+  free(pool);
+}
+
+// Submit an asynchronous read operation
+// Returns user_data tag on success (>=0), negative errno on error
+// The user_data is used to identify the completion later
+long long uring_read_async(uring_ctx *ctx, int fd, void *buf, unsigned len, long long offset, uint64_t user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  
+  io_uring_prep_read(sqe, fd, buf, len, (off_t)offset);
+  sqe->user_data = user_data;
+  
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret; // negative errno
+  }
+  
+  return (long long)user_data;
+}
+
+// Submit an asynchronous write operation
+// Returns user_data tag on success (>=0), negative errno on error
+long long uring_write_async(uring_ctx *ctx, int fd, const void *buf, unsigned len, long long offset, uint64_t user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  
+  io_uring_prep_write(sqe, fd, buf, len, (off_t)offset);
+  sqe->user_data = user_data;
+  
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret; // negative errno
+  }
+  
+  return (long long)user_data;
+}
+
+// Wait for a completion (blocking)
+// Returns 0 on success, negative errno on error
+// On success, fills out: *user_data, *result (bytes read/written or negative errno)
+int uring_wait_completion(uring_ctx *ctx, uint64_t *user_data, int *result) {
+  if (!ctx || !user_data || !result) {
+    return -EINVAL;
+  }
+  
+  struct io_uring_cqe *cqe = NULL;
+  int ret = io_uring_wait_cqe(&ctx->ring, &cqe);
+  if (ret < 0) {
+    return ret;
+  }
+  
+  *user_data = cqe->user_data;
+  *result = cqe->res;
+  io_uring_cqe_seen(&ctx->ring, cqe);
+  return 0;
+}
+
+// Peek at a completion without waiting (non-blocking)
+// Returns 1 if completion found, 0 if none available, negative errno on error
+int uring_peek_completion(uring_ctx *ctx, uint64_t *user_data, int *result) {
+  if (!ctx || !user_data || !result) {
+    return -EINVAL;
+  }
+  
+  struct io_uring_cqe *cqe = NULL;
+  int ret = io_uring_peek_cqe(&ctx->ring, &cqe);
+  if (ret < 0) {
+    if (ret == -EAGAIN) {
+      return 0; // No completion available
+    }
+    return ret; // Error
+  }
+  
+  if (!cqe) {
+    return 0; // No completion available
+  }
+  
+  *user_data = cqe->user_data;
+  *result = cqe->res;
+  io_uring_cqe_seen(&ctx->ring, cqe);
+  return 1;
+}
+
+// Submit all queued operations
+// Returns number of operations submitted, or negative errno
+int uring_submit(uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  return io_uring_submit(&ctx->ring);
+}
+
+// Wait for at least 'wait_nr' completions, then submit any queued operations
+// Returns number of operations submitted, or negative errno
+int uring_submit_and_wait(uring_ctx *ctx, unsigned wait_nr) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  return io_uring_submit_and_wait(&ctx->ring, wait_nr);
 }
 
 // Batch pread: submit 'blocks' reads of 'block_size' bytes each into a single buffer.
