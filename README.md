@@ -26,7 +26,23 @@ git clone https://github.com/kangtegong/adaptive_buffering.git
 cd adaptive_buffering
 ```
 
-### 2. 의존성 설치 및 빌드
+### 2. Submodule 초기화 (필수)
+
+이 저장소는 `third_party/liburing`을 Git submodule로 관리합니다. 클론 후 submodule을 초기화해야 합니다:
+
+```bash
+# Submodule 초기화 및 다운로드
+git submodule update --init --recursive
+```
+
+또는 클론할 때 한 번에:
+
+```bash
+git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
+cd adaptive_buffering
+```
+
+### 3. 의존성 설치 및 빌드
 
 **옵션 A: 시스템에 liburing-dev 설치 (권장)**
 
@@ -39,16 +55,16 @@ sudo apt-get install -y liburing-dev
 make
 ```
 
-**옵션 B: liburing을 로컬로 vendoring (sudo 권한 없을 때)**
+**옵션 B: vendored liburing 사용 (sudo 권한 없을 때)**
 
 ```bash
-# liburing 자동 다운로드 및 빌드
-make fetch-liburing
+# vendored liburing 빌드 (submodule로 이미 다운로드됨)
 make
 ```
 
-**참고**: `third_party/liburing`은 Git 저장소에 포함되지 않습니다 (`.gitignore`에 추가됨). 
-저장소를 클론한 후 `make fetch-liburing` 명령어로 자동으로 다운로드됩니다.
+**참고**: `third_party/liburing`은 Git submodule로 관리됩니다. 
+클론 후 `git submodule update --init --recursive`로 초기화하거나, 
+`make fetch-liburing`으로 직접 다운로드할 수도 있습니다.
 
 ### 4. 빌드 확인
 
