@@ -12,9 +12,48 @@ Python이 io_uring을 "직접" 지원하진 않아서, 보통은 **liburing(C)**
 
 ## 설치
 
-자세한 설치 가이드는 [INSTALLATION.md](INSTALLATION.md)를 참조하세요.
+### Python 패키지로 설치 (권장)
 
-### 빠른 시작
+```bash
+# 저장소 클론
+git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
+cd adaptive_buffering
+
+# 패키지 설치
+pip install -e .
+```
+
+### 사용하기
+
+```python
+import pyiouring
+
+# 파일 복사
+copied = pyiouring.copy_path("/tmp/source.dat", "/tmp/dest.dat")
+
+# 동적 버퍼 크기로 복사
+def adaptive_size(offset, total, default):
+    progress = offset / total if total > 0 else 0
+    if progress < 0.25:
+        return default
+    elif progress < 0.5:
+        return default * 2
+    else:
+        return default * 4
+
+copied = pyiouring.copy_path_dynamic(
+    "/tmp/source.dat",
+    "/tmp/dest.dat",
+    buffer_size_cb=adaptive_size,
+    fsync=True
+)
+```
+
+자세한 설치 및 사용 방법은 다음 문서를 참조하세요:
+- [INSTALLATION.md](INSTALLATION.md): 상세 설치 가이드
+- [USAGE.md](USAGE.md): 사용 가이드 및 API 참조
+
+### 소스에서 빌드 (개발 모드)
 
 ```bash
 # 저장소 클론

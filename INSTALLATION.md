@@ -4,12 +4,96 @@
 
 ## 목차
 
-1. [시작하기](#시작하기)
-2. [의존성 설치](#의존성-설치)
-3. [빌드](#빌드)
-4. [빌드 확인](#빌드-확인)
-5. [간단한 테스트](#간단한-테스트)
-6. [문제 해결](#문제-해결)
+1. [Python 패키지로 설치 (권장)](#python-패키지로-설치-권장)
+2. [소스에서 빌드](#소스에서-빌드)
+3. [의존성 설치](#의존성-설치)
+4. [빌드](#빌드)
+5. [빌드 확인](#빌드-확인)
+6. [간단한 테스트](#간단한-테스트)
+7. [문제 해결](#문제-해결)
+
+## Python 패키지로 설치 (권장)
+
+### 1. 저장소 클론
+
+```bash
+git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
+cd adaptive_buffering
+```
+
+또는 HTTPS:
+
+```bash
+git clone --recursive https://github.com/kangtegong/adaptive_buffering.git
+cd adaptive_buffering
+```
+
+**참고**: `--recursive` 옵션은 submodule을 자동으로 초기화합니다.
+
+### 2. 패키지 설치
+
+#### 개발 모드로 설치 (권장)
+
+개발 중이거나 소스 코드를 수정할 때:
+
+```bash
+pip install -e .
+```
+
+또는:
+
+```bash
+python setup.py develop
+```
+
+#### 일반 설치
+
+```bash
+pip install .
+```
+
+또는:
+
+```bash
+python setup.py install
+```
+
+### 3. 설치 확인
+
+```bash
+python -c "import pyiouring; print(pyiouring.__version__)"
+```
+
+### 4. 사용하기
+
+```python
+import pyiouring
+
+# 파일 복사
+copied = pyiouring.copy_path("/tmp/source.dat", "/tmp/dest.dat")
+
+# 동적 버퍼 크기로 파일 쓰기
+def adaptive_size(offset, total, default):
+    progress = offset / total if total > 0 else 0
+    if progress < 0.25:
+        return default
+    elif progress < 0.5:
+        return default * 2
+    else:
+        return default * 4
+
+written = pyiouring.write_newfile_dynamic(
+    "/tmp/test.dat",
+    total_mb=100,
+    block_size=4096,
+    buffer_size_cb=adaptive_size,
+    fsync=True
+)
+```
+
+자세한 사용 예제는 [README.md](README.md)를 참조하세요.
+
+## 소스에서 빌드
 
 ## 시작하기
 
