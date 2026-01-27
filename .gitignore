@@ -23,8 +23,8 @@ __pycache__/
 .DS_Store
 Thumbs.db
 
-# Third party (managed via submodule or fetched via make)
-third_party/liburing/
+# Third party (managed via submodule)
+# third_party/liburing/ is now a git submodule
 
 # Test files
 /tmp/
