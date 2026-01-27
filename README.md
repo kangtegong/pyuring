@@ -50,7 +50,7 @@ make
 **참고**: `third_party/liburing`은 Git 저장소에 포함되지 않습니다 (`.gitignore`에 추가됨). 
 저장소를 클론한 후 `make fetch-liburing` 명령어로 자동으로 다운로드됩니다.
 
-### 3. 빌드 확인
+### 4. 빌드 확인
 
 빌드가 성공하면 `build/liburingwrap.so` 파일이 생성됩니다:
 
@@ -58,7 +58,7 @@ make
 ls -lh build/liburingwrap.so
 ```
 
-### 4. 간단한 테스트
+### 5. 간단한 테스트
 
 ```bash
 # 파일 읽기 데모
