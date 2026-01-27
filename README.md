@@ -1,6 +1,6 @@
 # Python에서 io_uring 써보기 (kernel 5.15)
 
-Python이 io_uring을 “직접” 지원하진 않아서, 보통은 **liburing(C)** 를 얇게 감싼 `.so`를 만들고 Python에서 `ctypes`로 호출하는 방식이 가장 간단합니다.
+Python이 io_uring을 "직접" 지원하진 않아서, 보통은 **liburing(C)** 를 얇게 감싼 `.so`를 만들고 Python에서 `ctypes`로 호출하는 방식이 가장 간단합니다.
 
 이 레포는 다음을 제공합니다:
 
@@ -8,8 +8,69 @@ Python이 io_uring을 “직접” 지원하진 않아서, 보통은 **liburing(
 - `python/uringwrap.py`: Python `ctypes` 바인딩
 - `python/demo_read.py`: 파일 일부를 io_uring으로 읽기
 - `python/demo_write_tmp.py`: 임시파일에 io_uring으로 쓰기
+- **동적 버퍼 크기 조정**: 런타임에 읽기/쓰기 버퍼 크기를 동적으로 조정하는 기능
 
-## 1) 의존성 설치 (Ubuntu)
+## 시작하기 (Quick Start)
+
+### 1. 저장소 클론
+
+```bash
+git clone git@github.com:kangtegong/adaptive_buffering.git
+cd adaptive_buffering
+```
+
+또는 HTTPS를 사용하는 경우:
+
+```bash
+git clone https://github.com/kangtegong/adaptive_buffering.git
+cd adaptive_buffering
+```
+
+### 2. 의존성 설치 및 빌드
+
+**옵션 A: 시스템에 liburing-dev 설치 (권장)**
+
+```bash
+# Ubuntu/Debian
+sudo apt-get update
+sudo apt-get install -y liburing-dev
+
+# 빌드
+make
+```
+
+**옵션 B: liburing을 로컬로 vendoring (sudo 권한 없을 때)**
+
+```bash
+# liburing 자동 다운로드 및 빌드
+make fetch-liburing
+make
+```
+
+**참고**: `third_party/liburing`은 Git 저장소에 포함되지 않습니다 (`.gitignore`에 추가됨). 
+저장소를 클론한 후 `make fetch-liburing` 명령어로 자동으로 다운로드됩니다.
+
+### 3. 빌드 확인
+
+빌드가 성공하면 `build/liburingwrap.so` 파일이 생성됩니다:
+
+```bash
+ls -lh build/liburingwrap.so
+```
+
+### 4. 간단한 테스트
+
+```bash
+# 파일 읽기 데모
+python3 python/demo_read.py /etc/hosts 256
+
+# 동적 버퍼 크기로 파일 쓰기 데모
+python3 python/demo_dynamic_buffer.py /tmp/test.dat 10 4096
+```
+
+## 상세 가이드
+
+### 1) 의존성 설치 (Ubuntu)
 
 `liburing` 개발 헤더가 필요합니다.
 
@@ -28,7 +89,7 @@ make
 **참고**: `third_party/liburing`은 Git 저장소에 포함되지 않습니다 (`.gitignore`에 추가됨). 
 저장소를 클론한 후 위 명령어로 자동으로 다운로드됩니다.
 
-## 2) 빌드
+### 2) 빌드
 
 ```bash
 make
@@ -36,7 +97,12 @@ make
 
 성공하면 `build/liburingwrap.so`가 생깁니다.
 
-## 3) 실행
+**빌드 문제 해결**:
+- `liburing-dev`가 설치되어 있으면 시스템 라이브러리를 사용합니다
+- 설치되어 있지 않으면 `make fetch-liburing`으로 자동 다운로드됩니다
+- 컴파일 오류가 발생하면 `gcc`, `make`가 설치되어 있는지 확인하세요
+
+### 3) 실행
 
 파일 읽기:
 
@@ -68,7 +134,7 @@ python3 python/demo_write_tmp.py
 python3 -m python.demo_copy /tmp/iouring_copy_src.dat /tmp/iouring_copy_dst.dat --qd 32 --block-size 1048576
 ```
 
-## 4) 속도 비교(벤치마크)
+### 4) 속도 비교(벤치마크)
 
 `sudo` 없이도 동작 가능한 형태로, **Python `os.pread` 루프(블록 단위) vs io_uring 배치 제출(C 래퍼)** 를 비교합니다.
 
@@ -107,7 +173,7 @@ python3 -m python.bench_copy --size-mb 512 --qd 32 --uring-block-size 1048576 --
 python3 -m python.bench_writev_newfile --total-mb 512 --block-size 4096 --vec 64 --repeats 7
 ```
 
-## 5) 동적 버퍼 크기 조정 (런타임)
+### 5) 동적 버퍼 크기 조정 (런타임)
 
 io_uring에서 한 번에 읽어들이고 SSD에 write하는(flush하는) 버퍼 크기를 **런타임에 동적으로 조정**할 수 있습니다.
 
