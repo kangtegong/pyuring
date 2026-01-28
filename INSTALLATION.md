@@ -18,8 +18,8 @@ This document explains how to install and build the adaptive_buffering project s
 
 
 ```bash
-git clone --recursive https://github.com/kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone --recursive https://github.com/kangtegong/pyiouring.git
+cd pyiouring
 ```
 
 **Note**: The `--recursive` option automatically initializes submodules.
