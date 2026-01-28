@@ -17,8 +17,8 @@ This repository provides:
 
 ```bash
 # Clone repository
-git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone --recursive git@github.com:kangtegong/pyiouring.git
+cd pyiouring
 
 # Install package
 pip install -e .
@@ -103,8 +103,8 @@ For detailed installation and usage instructions, see:
 
 ```bash
 # Clone repository
-git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone --recursive git@github.com:kangtegong/pyiouring.git
+cd pyiouring
 
 # Install dependencies (Option A: Use system library)
 sudo apt-get install -y liburing-dev

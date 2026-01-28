@@ -8,8 +8,8 @@ First, you need to install the package:
 
 ```bash
 # Clone repository
-git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone --recursive git@github.com:kangtegong/pyiouring.git
+cd pyiouring
 
 # Install package
 pip install -e .

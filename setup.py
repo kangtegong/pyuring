@@ -83,7 +83,7 @@ setup(
     long_description_content_type="text/markdown",
     author="Your Name",
     author_email="your.email@example.com",
-    url="https://github.com/kangtegong/adaptive_buffering",
+    url="https://github.com/kangtegong/pyiouring",
     packages=["pyiouring"],
     package_data={
         "pyiouring": ["lib/liburingwrap.so"],

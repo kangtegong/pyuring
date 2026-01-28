@@ -25,7 +25,7 @@ python3 examples/bench_async_vs_sync.py --num-files 100 --file-size-mb 10 --qd 3
 
 - `--repeats N`: Number of repetitions (default: 1)
 
-- `--odirect`: Use O_DIRECT (bypass page cache, actual disk I/O)
+- `--no-odirect`: Disable O_DIRECT (by default O_DIRECT is enabled for direct disk I/O, bypassing page cache)
 
 - `--clear-cache`: Clear page cache before test (requires sudo)
 
@@ -54,5 +54,5 @@ Generally, asynchronous I/O shows:
 
 ### Notes
 
-- Use the `--odirect` option to measure actual disk performance
+- O_DIRECT is enabled by default for direct disk I/O; use `--no-odirect` to use page cache
 - Use the `--repeats` option for more accurate measurements with multiple iterations

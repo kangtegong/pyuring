@@ -27,6 +27,7 @@ Usage:
 from __future__ import annotations
 
 import argparse
+import ctypes
 import os
 import sys
 import time
@@ -40,6 +41,24 @@ from typing import List, Tuple
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from pyiouring import UringCtx, BufferPool, UringError
 
+# O_DIRECT requires aligned buffers (typical alignment 4096); chunk size multiple of 4096
+O_DIRECT_ALIGN = 4096
+CHUNK_SIZE = 65536  # 64KB
+
+_libc = ctypes.CDLL("libc.so.6")
+_libc.posix_memalign.argtypes = [ctypes.POINTER(ctypes.c_void_p), ctypes.c_size_t, ctypes.c_size_t]
+_libc.posix_memalign.restype = ctypes.c_int
+_libc.read.argtypes = [ctypes.c_int, ctypes.c_void_p, ctypes.c_size_t]
+_libc.read.restype = ctypes.c_ssize_t
+
+
+def _aligned_buffer(size: int):
+    """Allocate alignment-sized aligned buffer for O_DIRECT. Caller must free with _libc.free."""
+    ptr = ctypes.c_void_p()
+    if _libc.posix_memalign(ctypes.byref(ptr), O_DIRECT_ALIGN, size) != 0:
+        raise OSError("posix_memalign failed")
+    return ptr
+
 
 def create_test_files(base_dir: Path, num_files: int, file_size_mb: int) -> List[Path]:
     """Create list of test files (empty files)"""
@@ -50,8 +69,8 @@ def create_test_files(base_dir: Path, num_files: int, file_size_mb: int) -> List
     return file_paths
 
 
-def sync_write(file_path: Path, data: bytes, use_odirect: bool = False) -> int:
-    """Write file synchronously (os.write)"""
+def sync_write(file_path: Path, data: bytes, use_odirect: bool = True) -> int:
+    """Write file synchronously (os.write). Uses aligned buffer when O_DIRECT."""
     flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
     if use_odirect:
         flags |= os.O_DIRECT
@@ -59,40 +78,63 @@ def sync_write(file_path: Path, data: bytes, use_odirect: bool = False) -> int:
     try:
         total_written = 0
         offset = 0
-        chunk_size = 65536  # 64KB chunks
-        
-        while offset < len(data):
-            chunk = data[offset:offset + chunk_size]
-            written = os.write(fd, chunk)
-            total_written += written
-            offset += written
+        if use_odirect:
+            ptr = _aligned_buffer(CHUNK_SIZE)
+            try:
+                buf_array = (ctypes.c_char * CHUNK_SIZE).from_address(ptr.value)
+                while offset < len(data):
+                    n = min(CHUNK_SIZE, len(data) - offset)
+                    ctypes.memmove(ptr, (ctypes.c_char * n).from_buffer_copy(data[offset : offset + n]), n)
+                    written = os.write(fd, memoryview(buf_array)[:n])
+                    total_written += written
+                    offset += written
+            finally:
+                _libc.free(ptr)
+        else:
+            while offset < len(data):
+                chunk = data[offset : offset + CHUNK_SIZE]
+                written = os.write(fd, chunk)
+                total_written += written
+                offset += written
         os.fsync(fd)  # Force write to disk
         return total_written
     finally:
         os.close(fd)
 
 
-def sync_read(file_path: Path, use_odirect: bool = False) -> bytes:
-    """Read file synchronously (os.read)"""
+def sync_read(file_path: Path, use_odirect: bool = True) -> bytes:
+    """Read file synchronously (os.read or libc read with aligned buffer when O_DIRECT)."""
     flags = os.O_RDONLY
     if use_odirect:
         flags |= os.O_DIRECT
     fd = os.open(file_path, flags)
     try:
-        data = bytearray()
-        chunk_size = 65536  # 64KB chunks
-        
-        while True:
-            chunk = os.read(fd, chunk_size)
-            if not chunk:
-                break
-            data.extend(chunk)
-        return bytes(data)
+        if use_odirect:
+            ptr = _aligned_buffer(CHUNK_SIZE)
+            try:
+                buf_array = (ctypes.c_char * CHUNK_SIZE).from_address(ptr.value)
+                parts: List[bytes] = []
+                while True:
+                    n = _libc.read(fd, ptr, CHUNK_SIZE)
+                    if n <= 0:
+                        break
+                    parts.append(bytes(memoryview(buf_array)[:n]))
+                return b"".join(parts)
+            finally:
+                _libc.free(ptr)
+        else:
+            data = bytearray()
+            while True:
+                chunk = os.read(fd, CHUNK_SIZE)
+                if not chunk:
+                    break
+                data.extend(chunk)
+            return bytes(data)
     finally:
         os.close(fd)
 
 
-def async_write_uring(ctx: UringCtx, file_path: Path, data: bytes, pool: BufferPool, slot: int, user_data: int, use_odirect: bool = False) -> None:
+def async_write_uring(ctx: UringCtx, file_path: Path, data: bytes, pool: BufferPool, slot: int, user_data: int, use_odirect: bool = True) -> None:
     """Submit asynchronous file write (io_uring)"""
     flags = os.O_CREAT | os.O_WRONLY | os.O_TRUNC
     if use_odirect:
@@ -112,7 +154,7 @@ def async_write_uring(ctx: UringCtx, file_path: Path, data: bytes, pool: BufferP
     ctx.write_async_ptr(fd, buf_ptr, len(data), offset=0, user_data=user_data_encoded)
 
 
-def async_read_uring(ctx: UringCtx, file_path: Path, pool: BufferPool, slot: int, expected_size: int, user_data: int, use_odirect: bool = False) -> None:
+def async_read_uring(ctx: UringCtx, file_path: Path, pool: BufferPool, slot: int, expected_size: int, user_data: int, use_odirect: bool = True) -> None:
     """Submit asynchronous file read (io_uring)"""
     flags = os.O_RDONLY
     if use_odirect:
@@ -128,7 +170,7 @@ def async_read_uring(ctx: UringCtx, file_path: Path, pool: BufferPool, slot: int
     ctx.read_async_ptr(fd, buf_ptr, expected_size, offset=0, user_data=user_data_encoded)
 
 
-def benchmark_sync_write(file_paths: List[Path], file_size_mb: int, use_odirect: bool = False) -> Tuple[float, int]:
+def benchmark_sync_write(file_paths: List[Path], file_size_mb: int, use_odirect: bool = True) -> Tuple[float, int]:
     """Synchronous write benchmark"""
     file_size = file_size_mb * 1024 * 1024
     data = b"X" * file_size
@@ -146,7 +188,7 @@ def benchmark_sync_write(file_paths: List[Path], file_size_mb: int, use_odirect:
     return elapsed, total_written
 
 
-def benchmark_sync_read(file_paths: List[Path], use_odirect: bool = False) -> Tuple[float, int]:
+def benchmark_sync_read(file_paths: List[Path], use_odirect: bool = True) -> Tuple[float, int]:
     """Synchronous read benchmark"""
     start_time = time.perf_counter()
     total_read = 0
@@ -161,7 +203,7 @@ def benchmark_sync_read(file_paths: List[Path], use_odirect: bool = False) -> Tu
     return elapsed, total_read
 
 
-def benchmark_async_write(file_paths: List[Path], file_size_mb: int, qd: int, use_odirect: bool = False) -> Tuple[float, int]:
+def benchmark_async_write(file_paths: List[Path], file_size_mb: int, qd: int, use_odirect: bool = True) -> Tuple[float, int]:
     """Asynchronous write benchmark"""
     file_size = file_size_mb * 1024 * 1024
     data = b"X" * file_size
@@ -228,7 +270,7 @@ def benchmark_async_write(file_paths: List[Path], file_size_mb: int, qd: int, us
     return elapsed, total_written
 
 
-def benchmark_async_read(file_paths: List[Path], file_size_mb: int, qd: int, use_odirect: bool = False) -> Tuple[float, int]:
+def benchmark_async_read(file_paths: List[Path], file_size_mb: int, qd: int, use_odirect: bool = True) -> Tuple[float, int]:
     """Asynchronous read benchmark"""
     file_size = file_size_mb * 1024 * 1024
     
@@ -344,12 +386,13 @@ def main():
     parser.add_argument("--qd", type=int, default=32, help="Queue depth (default: 32)")
     parser.add_argument("--measure-syscalls", action="store_true", help="Measure system calls (requires strace)")
     parser.add_argument("--keep-files", action="store_true", help="Keep test files")
-    parser.add_argument("--odirect", action="store_true", help="Use O_DIRECT (bypass page cache, actual disk I/O)")
+    parser.add_argument("--no-odirect", action="store_true", help="Disable O_DIRECT (use page cache instead of direct disk I/O)")
     parser.add_argument("--repeats", type=int, default=1, help="Number of repetitions (calculate average)")
     parser.add_argument("--clear-cache", action="store_true", help="Clear page cache before test (requires sudo)")
     
     args = parser.parse_args()
-    
+    args.odirect = not args.no_odirect
+
     # Create temporary directory
     with tempfile.TemporaryDirectory(prefix="iouring_bench_") as tmpdir:
         tmp_path = Path(tmpdir)

@@ -1,6 +1,6 @@
 # Installation Guide
 
-This document explains how to install and build the adaptive_buffering project step by step.
+This document explains how to install and build the pyiouring project step by step.
 
 ## Table of Contents
 
@@ -18,8 +18,8 @@ This document explains how to install and build the adaptive_buffering project s
 
 
 ```bash
-git clone --recursive https://github.com/kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone --recursive https://github.com/kangtegong/pyiouring.git
+cd pyiouring
 ```
 
 **Note**: The `--recursive` option automatically initializes submodules.
@@ -175,15 +175,15 @@ rm -rf third_party/liburing
 Using SSH:
 
 ```bash
-git clone git@github.com:kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone git@github.com:kangtegong/pyiouring.git
+cd pyiouring
 ```
 
 Using HTTPS:
 
 ```bash
-git clone https://github.com/kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone https://github.com/kangtegong/pyiouring.git
+cd pyiouring
 ```
 
 ### 2. Initialize Submodules (Required)
@@ -198,8 +198,8 @@ git submodule update --init --recursive
 Or all at once when cloning:
 
 ```bash
-git clone --recursive git@github.com:kangtegong/adaptive_buffering.git
-cd adaptive_buffering
+git clone --recursive git@github.com:kangtegong/pyiouring.git
+cd pyiouring
 ```
 
 **Note**: `third_party/liburing` is managed as a Git submodule. 
