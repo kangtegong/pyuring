@@ -108,24 +108,28 @@ python3 examples/bench_async_vs_sync.py --num-files 10 --file-size-mb 10
 
 More options: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**.
 
-## Publishing to PyPI (`twine`)
+## Publishing to PyPI
 
-Build artifacts must be **only** wheel (`.whl`) and source (`.tar.gz`) files. If something else lives under `dist/` (for example a directory named `manylinux-out` left by auditing / container tooling), then:
-
-```bash
-twine upload dist/*
-```
-
-can pass that directory to Twine, which then fails with:
+**Do not run `twine upload dist/*`.** Shell globbing includes **directories** under `dist/` (e.g. `manylinux-out/` from tooling), and Twine then fails with:
 
 `InvalidDistribution: Unknown distribution format: 'manylinux-out'`
 
-**Fix:** remove stray paths under `dist/`, and upload with explicit globs:
+**Recommended:** use the script (cleans `dist/`, rebuilds, checks, uploads only `pyuring-*.whl` and `pyuring-*.tar.gz`):
 
 ```bash
-python3 -m build
-python3 -m twine check dist/*.whl dist/*.tar.gz
-python3 -m twine upload dist/*.whl dist/*.tar.gz
+export TWINE_USERNAME=__token__
+export TWINE_PASSWORD='pypi-…'   # your API token; do not commit this
+./scripts/publish-pypi.sh
+```
+
+Optional: `./scripts/publish-pypi.sh --verbose`
+
+**Manual equivalent:**
+
+```bash
+rm -rf dist && python3 -m build
+python3 -m twine check dist/pyuring-*.whl dist/pyuring-*.tar.gz
+python3 -m twine upload dist/pyuring-*.whl dist/pyuring-*.tar.gz
 ```
 
 ## Uninstall
