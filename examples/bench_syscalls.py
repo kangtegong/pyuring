@@ -17,9 +17,9 @@ import sys
 import tempfile
 from pathlib import Path
 
-# pyiouring import
+# xk import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pyiouring import UringCtx, BufferPool
+from xk import UringCtx, BufferPool
 
 # O_DIRECT requires aligned buffers
 O_DIRECT_ALIGN = 4096

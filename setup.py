@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Setup script for pyiouring package.
+Setup script for xk package.
 """
 
 import os
@@ -52,16 +52,15 @@ class BuildNative(build_ext):
         """Copy the built library to the package directory."""
         project_root = Path(__file__).parent
         src_lib = project_root / "build" / "liburingwrap.so"
-        dst_dir = project_root / "pyiouring" / "lib"
-        dst_dir.mkdir(exist_ok=True)
-        dst_lib = dst_dir / "liburingwrap.so"
-        
-        if src_lib.exists():
-            import shutil
+        if not src_lib.exists():
+            raise RuntimeError(f"Library not found: {src_lib}")
+        import shutil
+        for pkg_name in ("xk", "pyiouring"):
+            dst_dir = project_root / pkg_name / "lib"
+            dst_dir.mkdir(exist_ok=True)
+            dst_lib = dst_dir / "liburingwrap.so"
             shutil.copy2(src_lib, dst_lib)
             print(f"Copied {src_lib} to {dst_lib}")
-        else:
-            raise RuntimeError(f"Library not found: {src_lib}")
 
 
 class BuildPyWithNative(build_py):
@@ -76,16 +75,17 @@ class BuildPyWithNative(build_py):
 
 
 setup(
-    name="pyiouring",
+    name="xk",
     version="0.1.0",
     description="Python bindings for io_uring with dynamic buffer size adjustment",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
     author="Your Name",
     author_email="your.email@example.com",
-    url="https://github.com/kangtegong/pyiouring",
-    packages=["pyiouring"],
+    url="https://github.com/kangtegong/xk",
+    packages=["xk", "pyiouring"],
     package_data={
+        "xk": ["lib/liburingwrap.so"],
         "pyiouring": ["lib/liburingwrap.so"],
     },
     include_package_data=True,

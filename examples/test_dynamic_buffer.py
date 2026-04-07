@@ -13,9 +13,9 @@ import tempfile
 from pathlib import Path
 from typing import List, Tuple
 
-# pyiouring import
+# xk import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from pyiouring import copy_path_dynamic, write_newfile_dynamic, UringError
+from xk import copy_path_dynamic, write_newfile_dynamic, UringError
 
 
 class BufferSizeTracker:
