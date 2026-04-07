@@ -108,6 +108,26 @@ python3 examples/bench_async_vs_sync.py --num-files 10 --file-size-mb 10
 
 More options: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**.
 
+## Publishing to PyPI (`twine`)
+
+Build artifacts must be **only** wheel (`.whl`) and source (`.tar.gz`) files. If something else lives under `dist/` (for example a directory named `manylinux-out` left by auditing / container tooling), then:
+
+```bash
+twine upload dist/*
+```
+
+can pass that directory to Twine, which then fails with:
+
+`InvalidDistribution: Unknown distribution format: 'manylinux-out'`
+
+**Fix:** remove stray paths under `dist/`, and upload with explicit globs:
+
+```bash
+python3 -m build
+python3 -m twine check dist/*.whl dist/*.tar.gz
+python3 -m twine upload dist/*.whl dist/*.tar.gz
+```
+
 ## Uninstall
 
 ```bash

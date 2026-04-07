@@ -8,6 +8,8 @@ build/
 # Python package build
 pyuring/lib/liburingwrap.so
 dist/
+# tooling sometimes drops this next to or inside dist/; never upload it as a "distribution"
+manylinux-out/
 *.egg-info/
 .eggs/
 
