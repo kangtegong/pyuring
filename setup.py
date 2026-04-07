@@ -81,9 +81,14 @@ setup(
     description="Python bindings for io_uring with dynamic buffer size adjustment",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
-    author="Your Name",
-    author_email="your.email@example.com",
+    author="Kang Minchul",
+    author_email="tegongkang@gmail.com",
     url="https://github.com/kangtegong/pyuring",
+    license="MIT",
+    project_urls={
+        "Source": "https://github.com/kangtegong/pyuring",
+        "Documentation": "https://github.com/kangtegong/pyuring/blob/main/README.md",
+    },
     packages=["pyuring", "pyuring.lib"],
     package_data={
         "pyuring": ["lib/liburingwrap.so"],

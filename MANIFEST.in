@@ -1,6 +1,7 @@
 include README.md
 include INSTALLATION.md
 include USAGE.md
+include LICENSE
 include Makefile
 
 recursive-include csrc *.c

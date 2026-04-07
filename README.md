@@ -1,9 +1,26 @@
 # pyuring
 
-Python bindings for io_uring (Linux 5.15+) with two API layers:
+**Repository:** [github.com/kangtegong/pyuring](https://github.com/kangtegong/pyuring) — source tree for the **`pyuring`** Python distribution.
 
-- **Easy API**: short entrypoints for everyday use (`copy`, `write`, `write_many`)
-- **Raw API**: full low-level feature set preserved under `pyuring.raw`
+## What this project is
+
+`pyuring` is a **Linux-only** Python library that talks to a small native shared library, **`liburingwrap.so`**, via `ctypes`. That C layer is built on top of **[liburing](https://github.com/axboe/liburing)** and the kernel **io_uring** interface (queue depth, submissions, completions). The bindings are aimed at **high-throughput file copy and synthetic write workloads**, **synchronous and asynchronous** `read`/`write` on open file descriptors, and optional **dynamic buffer sizing** (callbacks implemented in Python for some code paths).
+
+This repository is **not** a complete Python mapping of every liburing opcode or helper. It exposes a **focused subset** implemented in `csrc/` (e.g. pipeline copy/write in C, `UringCtx` for queued I/O, `BufferPool` for fixed-size slots). Treat it as a specialized toolkit and benchmark harness, not a general-purpose async filesystem framework.
+
+| Component | Role |
+|-----------|------|
+| `pyuring/` | Python package: orchestrated helpers, `UringCtx`, `BufferPool`, module functions backed by the `.so` |
+| `csrc/uring_wrap.c` (and related) | Native wrapper around io_uring; built as `build/liburingwrap.so` |
+| `Makefile` | Builds the shared library (system or vendored liburing) |
+| `third_party/liburing` | Optional vendored liburing (submodule or manual tree) |
+| `examples/` | Benchmarks and the `test_dynamic_buffer.py` verification script |
+
+## Requirements
+
+- **OS:** Linux with a kernel that supports io_uring (project documentation assumes **5.15+**).
+- **Python:** **3.8+** (see `setup.py`).
+- **Build:** `gcc`, `make`, and **liburing development headers** (or a built vendored liburing tree).
 
 ## Install
 
@@ -11,67 +28,63 @@ Python bindings for io_uring (Linux 5.15+) with two API layers:
 pip install pyuring
 ```
 
-If your environment does not have `liburing` headers installed, install them first:
+From a checkout (builds the native library as part of install):
 
-- Ubuntu/Debian: `sudo apt-get install -y liburing-dev`
-- Fedora/RHEL: `sudo dnf install liburing-devel`
-- Arch: `sudo pacman -S liburing`
+```bash
+git clone --recursive https://github.com/kangtegong/pyuring.git
+cd pyuring
+pip install -e .
+```
 
-## Quick Start (Easy API)
+System packages for liburing headers when not using the submodule:
+
+| Distribution | Package |
+|--------------|---------|
+| Debian / Ubuntu | `liburing-dev` |
+| Fedora / RHEL | `liburing-devel` |
+| Arch Linux | `liburing` |
+
+Details, failures, and manual copy of the `.so` into `pyuring/lib/`: see **[INSTALLATION.md](INSTALLATION.md)**.
+
+## Quick start
+
+**Orchestrated helpers** apply preset queue-depth and block-size tuning via a `mode` argument:
 
 ```python
 import pyuring as iou
 
-# 1) Copy one file
-copied = iou.copy("/tmp/source.dat", "/tmp/dest.dat")
-
-# 2) Write one file
-written = iou.write("/tmp/new.dat", total_mb=100)
-
-# 3) Write many files
-total = iou.write_many("/tmp/out", nfiles=10, mb_per_file=100)
+iou.copy("/tmp/source.dat", "/tmp/dest.dat")
+iou.write("/tmp/new.dat", total_mb=100)
+iou.write_many("/tmp/out", nfiles=10, mb_per_file=100)
 ```
 
-### Easy API modes
-
-- `mode="safe"`: conservative tuning
-- `mode="fast"`: aggressive tuning
-- `mode="auto"`: dynamic buffer strategy (default)
-
-```python
-iou.copy("a.bin", "b.bin", mode="safe")
-iou.copy("a.bin", "b.bin", mode="fast")
-iou.copy("a.bin", "b.bin", mode="auto", fsync=True)
-```
-
-## Full Feature Access (Raw API)
-
-All original APIs are preserved:
+**Direct bindings** are the same functions and classes as above, grouped on `pyuring.direct` (legacy alias: `pyuring.raw`):
 
 ```python
 import pyuring as iou
 
-iou.raw.copy_path(...)
-iou.raw.copy_path_dynamic(...)
-iou.raw.write_newfile(...)
-iou.raw.write_newfile_dynamic(...)
-iou.raw.write_manyfiles(...)
+iou.direct.copy_path("/tmp/a.dat", "/tmp/b.dat", qd=32, block_size=1 << 20)
 
-with iou.raw.UringCtx(entries=64) as ctx:
-    ...
-
-with iou.raw.BufferPool.create(initial_count=4, initial_size=4096) as pool:
+with iou.direct.UringCtx(entries=64) as ctx:
     ...
 ```
 
-You can also import symbols directly from the package:
+Full parameter tables, `UringCtx` / `BufferPool` methods, and semantics: **[USAGE.md](USAGE.md)**.
 
-```python
-from pyuring import copy_path, write_newfile_dynamic, UringCtx
+## Documentation index
+
+| Document | Contents |
+|----------|----------|
+| [INSTALLATION.md](INSTALLATION.md) | Dependencies, editable install, vendored liburing, verification |
+| [USAGE.md](USAGE.md) | API specification (tables), behavior notes |
+| [examples/BENCHMARKS.md](examples/BENCHMARKS.md) | Benchmark scripts |
+
+## Verification
+
+After a local build:
+
+```bash
+make && python3 examples/test_dynamic_buffer.py
 ```
 
-## Documents
-
-- [INSTALLATION.md](INSTALLATION.md): install/build/troubleshooting
-- [USAGE.md](USAGE.md): easy + raw API guide and reference
-- [examples/BENCHMARKS.md](examples/BENCHMARKS.md): benchmark usage
+The script must exit with status **0** and print that all checks passed.

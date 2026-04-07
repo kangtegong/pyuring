@@ -1,75 +1,82 @@
-# Installation Guide
+# Installation — pyuring
 
-This guide covers install, build, verification, and first usage for `pyuring`.
+This guide applies to the **[pyuring](https://github.com/kangtegong/pyuring)** repository: a Python package with a **native extension library** (`liburingwrap.so`) that must be present next to the built wheel/sdist or under `build/` during development.
+
+## What you are installing
+
+| Piece | Purpose |
+|-------|---------|
+| **`pyuring` (Python)** | `ctypes` bindings, orchestrated helpers, and grouped **`pyuring.direct`** exports |
+| **`liburingwrap.so`** | Shared object produced by **`make`** from `csrc/`; links against **liburing** |
+| **liburing** | Either **system-installed** (`-luring`) or **vendored** under `third_party/liburing` |
+
+Installing with **`pip install .`** or **`pip install -e .`** runs **`build_ext`**, which invokes **`make`**, copies the `.so` into **`pyuring/lib/`**, and then installs the package.
 
 ## Requirements
 
-- Linux kernel 5.15+
-- Python 3.6+
-- `gcc`, `make`, `git`
+| Requirement | Notes |
+|-------------|--------|
+| **Linux** | io_uring must be available; docs assume kernel **5.15+**. |
+| **Python** | **3.8+** (`setup.py` / `python_requires`). |
+| **Toolchain** | `gcc`, `make`, standard build headers. |
+| **liburing** | Development headers **or** a complete vendored tree under `third_party/liburing`. |
 
-Optional:
-
-- System `liburing-dev` (or use vendored `third_party/liburing`)
-
-## Recommended install
+## Recommended install (PyPI)
 
 ```bash
 pip install pyuring
 ```
 
-## If `pip install -e .` fails
+You still need **liburing** on the build machine when installing from sdist/source; wheels (if published for your platform) bundle the `.so` inside the package.
 
-### Option A: install system liburing
-
-Ubuntu/Debian:
+## Editable install from a clone
 
 ```bash
-sudo apt-get update
-sudo apt-get install -y liburing-dev
-```
-
-Fedora/RHEL:
-
-```bash
-sudo dnf install liburing-devel
-```
-
-Arch:
-
-```bash
-sudo pacman -S liburing
-```
-
-Then retry:
-
-```bash
+git clone https://github.com/kangtegong/pyuring.git
+cd pyuring
+git submodule update --init --recursive
 pip install -e .
 ```
 
-### Option B: build vendored liburing manually
+If **`pip install -e .`** fails during the native build, use one of the options below.
+
+### Option A — system liburing headers
+
+Install the development package, then retry **`pip install -e .`**.
+
+| Distribution | Command |
+|--------------|---------|
+| Debian / Ubuntu | `sudo apt-get update && sudo apt-get install -y liburing-dev` |
+| Fedora / RHEL | `sudo dnf install liburing-devel` |
+| Arch Linux | `sudo pacman -S liburing` |
+
+### Option B — vendored liburing only (manual sequence)
+
+Build liburing and the wrapper, place the `.so` where the package expects it, then install:
 
 ```bash
 git submodule update --init --recursive
-cd third_party/liburing
-make
-cd ../..
+cd third_party/liburing && make && cd ../..
 make
 mkdir -p pyuring/lib
 cp build/liburingwrap.so pyuring/lib/
 pip install -e .
 ```
 
+The **`Makefile`** skips cloning when **`third_party/liburing/src/include/liburing.h`** already exists (e.g. extracted tarball without `.git`).
+
 ## Verify installation
 
 ```bash
-python -c "import pyuring as iou; print(iou.__version__)"
-python -c "import pyuring as iou; print(iou.copy.__name__, iou.raw.copy_path.__name__)"
+python -c "import pyuring; print(pyuring.__version__)"
+python -c "import pyuring as iou; print(iou.copy.__name__, iou.direct.copy_path.__name__)"
 ```
 
-## First run
+Both lines should run without **`ImportError`** or **`UringError`**.
 
-Easy API:
+## First use after install
+
+**Orchestrated helpers:**
 
 ```python
 import pyuring as iou
@@ -79,21 +86,27 @@ written = iou.write("/tmp/new.dat", total_mb=10)
 total = iou.write_many("/tmp/out", nfiles=5, mb_per_file=10)
 ```
 
-Raw API (full native feature set):
+**Direct bindings** (same functions as top-level exports; grouped on **`direct`**):
 
 ```python
 import pyuring as iou
 
-copied = iou.raw.copy_path("/tmp/source.dat", "/tmp/dest.dat", qd=32, block_size=1 << 20)
+copied = iou.direct.copy_path(
+    "/tmp/source.dat", "/tmp/dest.dat", qd=32, block_size=1 << 20
+)
 ```
 
-## Benchmarks
+API tables: **[USAGE.md](USAGE.md)**.
+
+## Benchmarks and self-tests
 
 ```bash
-python3 examples/bench_async_vs_sync.py
+make
+python3 examples/test_dynamic_buffer.py
+python3 examples/bench_async_vs_sync.py --num-files 10 --file-size-mb 10
 ```
 
-More options: [examples/BENCHMARKS.md](examples/BENCHMARKS.md)
+More options: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**.
 
 ## Uninstall
 
@@ -101,8 +114,10 @@ More options: [examples/BENCHMARKS.md](examples/BENCHMARKS.md)
 pip uninstall pyuring
 ```
 
-Clean build artifacts:
+Remove local build outputs:
 
 ```bash
 make clean
 ```
+
+This does not remove **`third_party/liburing`** artifacts; clean that tree separately if needed.

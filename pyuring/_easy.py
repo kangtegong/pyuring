@@ -1,8 +1,8 @@
 """
 Easy entrypoints for pyuring.
 
-These helpers provide a simple user-facing API while preserving
-all low-level capabilities through pyuring.raw.
+These helpers provide tuned file I/O entry points; the same operations are
+available without preset tuning via `pyuring.direct` (or top-level exports).
 """
 
 from __future__ import annotations
