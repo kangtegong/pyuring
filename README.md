@@ -1,23 +1,26 @@
-# xk
+# pyuring
 
 Python bindings for io_uring (Linux 5.15+) with two API layers:
 
 - **Easy API**: short entrypoints for everyday use (`copy`, `write`, `write_many`)
-- **Raw API**: full low-level feature set preserved under `xk.raw`
+- **Raw API**: full low-level feature set preserved under `pyuring.raw`
 
 ## Install
 
 ```bash
-git clone --recursive https://github.com/kangtegong/xk.git
-cd xk
-git submodule update --init --recursive
-pip install -e .
+pip install pyuring
 ```
+
+If your environment does not have `liburing` headers installed, install them first:
+
+- Ubuntu/Debian: `sudo apt-get install -y liburing-dev`
+- Fedora/RHEL: `sudo dnf install liburing-devel`
+- Arch: `sudo pacman -S liburing`
 
 ## Quick Start (Easy API)
 
 ```python
-import xk as iou
+import pyuring as iou
 
 # 1) Copy one file
 copied = iou.copy("/tmp/source.dat", "/tmp/dest.dat")
@@ -46,7 +49,7 @@ iou.copy("a.bin", "b.bin", mode="auto", fsync=True)
 All original APIs are preserved:
 
 ```python
-import xk as iou
+import pyuring as iou
 
 iou.raw.copy_path(...)
 iou.raw.copy_path_dynamic(...)
@@ -61,10 +64,10 @@ with iou.raw.BufferPool.create(initial_count=4, initial_size=4096) as pool:
     ...
 ```
 
-Backward compatibility imports are also still valid:
+You can also import symbols directly from the package:
 
 ```python
-from xk import copy_path, write_newfile_dynamic, UringCtx
+from pyuring import copy_path, write_newfile_dynamic, UringCtx
 ```
 
 ## Documents

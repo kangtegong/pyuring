@@ -1,15 +1,15 @@
 """
-Easy entrypoints for xk.
+Easy entrypoints for pyuring.
 
 These helpers provide a simple user-facing API while preserving
-all low-level capabilities through xk.raw.
+all low-level capabilities through pyuring.raw.
 """
 
 from __future__ import annotations
 
 from typing import Callable, Optional
 
-from xk._native import (
+from pyuring._native import (
     copy_path,
     copy_path_dynamic,
     write_newfile,
@@ -63,9 +63,17 @@ def copy(
     fsync: bool = False,
     buffer_size_cb: Optional[Callable[[int, int, int], int]] = None,
 ) -> int:
-    """Copy a file with a simple mode-based API."""
+    """
+    Copy a file with a simple mode-based API.
+
+    mode:
+      - safe: conservative queue depth / buffer size
+      - fast: aggressive queue depth / buffer size
+      - auto: uses dynamic buffer copy with built-in adaptive callback
+    """
     _validate_mode(mode)
     tuned_qd, tuned_block = _resolve_copy_tuning(mode, qd, block_size)
+
     if mode == "auto":
         return copy_path_dynamic(
             src_path,
@@ -75,6 +83,7 @@ def copy(
             buffer_size_cb=buffer_size_cb or _adaptive_buffer_size,
             fsync=fsync,
         )
+
     return copy_path(src_path, dst_path, qd=tuned_qd, block_size=tuned_block)
 
 
@@ -89,9 +98,17 @@ def write(
     dsync: bool = False,
     buffer_size_cb: Optional[Callable[[int, int, int], int]] = None,
 ) -> int:
-    """Write a new file with a simple mode-based API."""
+    """
+    Write a new file with a simple mode-based API.
+
+    mode:
+      - safe: conservative queue depth / buffer size
+      - fast: aggressive queue depth / buffer size
+      - auto: uses dynamic buffer write with built-in adaptive callback
+    """
     _validate_mode(mode)
     tuned_qd, tuned_block = _resolve_write_tuning(mode, qd, block_size)
+
     if mode == "auto":
         return write_newfile_dynamic(
             dst_path,
@@ -102,6 +119,7 @@ def write(
             dsync=dsync,
             buffer_size_cb=buffer_size_cb or _adaptive_buffer_size,
         )
+
     return write_newfile(
         dst_path,
         total_mb=total_mb,
@@ -122,7 +140,11 @@ def write_many(
     block_size: int = 4096,
     fsync_end: bool = False,
 ) -> int:
-    """Write many files with a simple mode-based API."""
+    """
+    Write many files with a simple mode-based API.
+
+    Note: maps to write_manyfiles(). mode only adjusts qd/block_size presets.
+    """
     _validate_mode(mode)
     tuned_qd, tuned_block = _resolve_write_tuning(mode, qd, block_size)
     return write_manyfiles(

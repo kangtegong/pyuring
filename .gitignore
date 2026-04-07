@@ -6,8 +6,7 @@ build/
 *.d
 
 # Python package build
-xk/lib/liburingwrap.so
-pyiouring/lib/liburingwrap.so
+pyuring/lib/liburingwrap.so
 dist/
 *.egg-info/
 .eggs/

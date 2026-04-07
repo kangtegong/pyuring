@@ -37,9 +37,9 @@ import shutil
 from pathlib import Path
 from typing import List, Tuple
 
-# xk import
+# pyuring import
 sys.path.insert(0, os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
-from xk import UringCtx, BufferPool, UringError
+from pyuring import UringCtx, BufferPool, UringError
 
 # O_DIRECT requires aligned buffers (typical alignment 4096); chunk size multiple of 4096
 O_DIRECT_ALIGN = 4096

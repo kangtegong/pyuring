@@ -1,0 +1,7 @@
+include README.md
+include INSTALLATION.md
+include USAGE.md
+include Makefile
+
+recursive-include csrc *.c
+recursive-include pyuring *.py

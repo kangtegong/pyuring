@@ -1,11 +1,11 @@
 """
-pyiouring - Python bindings for io_uring with dynamic buffer size adjustment
+pyuring - Python bindings for io_uring with dynamic buffer size adjustment
 
 This package provides Python bindings for io_uring operations with support for
 dynamically adjusting buffer sizes at runtime.
 """
 
-from pyiouring._native import (
+from pyuring._native import (
     UringError,
     UringCtx,
     BufferPool,
@@ -15,15 +15,17 @@ from pyiouring._native import (
     write_newfile_dynamic,
     write_manyfiles,
 )
-from pyiouring._easy import copy, write, write_many
+from pyuring._easy import copy, write, write_many
 
 __version__ = "0.1.0"
+
 
 class _RawApi(object):
     """Namespace exposing the unchanged native API."""
     pass
 
-# Full native API preserved under `pyiouring.raw`.
+
+# Full native API preserved under `pyuring.raw`.
 raw = _RawApi()
 raw.UringError = UringError
 raw.UringCtx = UringCtx
@@ -41,7 +43,7 @@ __all__ = [
     "write_many",
     "raw",
 
-    # Native API (backward compatibility)
+    # Native API
     "UringError",
     "UringCtx",
     "BufferPool",
@@ -51,4 +53,3 @@ __all__ = [
     "write_newfile_dynamic",
     "write_manyfiles",
 ]
-

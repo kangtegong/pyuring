@@ -38,7 +38,13 @@ $(OUT): build $(SRC) $(URING_DEPS)
 
 fetch-liburing:
 	mkdir -p third_party
-	if [ ! -d "$(LOCAL_LIBURING_DIR)/.git" ]; then \
+	@if [ -f "$(LOCAL_LIBURING_H)" ]; then \
+	  exit 0; \
+	elif [ ! -d "$(LOCAL_LIBURING_DIR)/.git" ]; then \
+	  if [ -e "$(LOCAL_LIBURING_DIR)" ]; then \
+	    echo "Error: $(LOCAL_LIBURING_DIR) exists but is not a git clone and headers are missing." >&2; \
+	    exit 1; \
+	  fi; \
 	  git clone --depth 1 https://github.com/axboe/liburing.git "$(LOCAL_LIBURING_DIR)"; \
 	fi
 

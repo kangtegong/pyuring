@@ -1,6 +1,6 @@
 # Installation Guide
 
-This guide covers install, build, verification, and first usage for `xk`.
+This guide covers install, build, verification, and first usage for `pyuring`.
 
 ## Requirements
 
@@ -15,10 +15,7 @@ Optional:
 ## Recommended install
 
 ```bash
-git clone --recursive https://github.com/kangtegong/xk.git
-cd xk
-git submodule update --init --recursive
-pip install -e .
+pip install pyuring
 ```
 
 ## If `pip install -e .` fails
@@ -58,16 +55,16 @@ cd third_party/liburing
 make
 cd ../..
 make
-mkdir -p xk/lib
-cp build/liburingwrap.so xk/lib/
+mkdir -p pyuring/lib
+cp build/liburingwrap.so pyuring/lib/
 pip install -e .
 ```
 
 ## Verify installation
 
 ```bash
-python -c "import xk as iou; print(iou.__version__)"
-python -c "import xk as iou; print(iou.copy.__name__, iou.raw.copy_path.__name__)"
+python -c "import pyuring as iou; print(iou.__version__)"
+python -c "import pyuring as iou; print(iou.copy.__name__, iou.raw.copy_path.__name__)"
 ```
 
 ## First run
@@ -75,7 +72,7 @@ python -c "import xk as iou; print(iou.copy.__name__, iou.raw.copy_path.__name__
 Easy API:
 
 ```python
-import xk as iou
+import pyuring as iou
 
 copied = iou.copy("/tmp/source.dat", "/tmp/dest.dat")
 written = iou.write("/tmp/new.dat", total_mb=10)
@@ -85,7 +82,7 @@ total = iou.write_many("/tmp/out", nfiles=5, mb_per_file=10)
 Raw API (full native feature set):
 
 ```python
-import xk as iou
+import pyuring as iou
 
 copied = iou.raw.copy_path("/tmp/source.dat", "/tmp/dest.dat", qd=32, block_size=1 << 20)
 ```
@@ -101,7 +98,7 @@ More options: [examples/BENCHMARKS.md](examples/BENCHMARKS.md)
 ## Uninstall
 
 ```bash
-pip uninstall xk
+pip uninstall pyuring
 ```
 
 Clean build artifacts:

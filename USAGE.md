@@ -1,6 +1,6 @@
 # Usage Guide
 
-`xk` now has:
+`pyuring` provides:
 
 - **Easy API** for day-1 usage
 - **Raw API** for full control (100% existing feature set preserved)
@@ -8,8 +8,8 @@
 ## Install
 
 ```bash
-git clone --recursive https://github.com/kangtegong/xk.git
-cd xk
+git clone --recursive https://github.com/kangtegong/pyuring.git
+cd pyuring
 git submodule update --init --recursive
 pip install -e .
 ```
@@ -19,7 +19,7 @@ pip install -e .
 ## Easy API (recommended)
 
 ```python
-import xk as iou
+import pyuring as iou
 ```
 
 ### `copy()`
@@ -99,7 +99,7 @@ write_many(
 All native functions/classes remain available:
 
 ```python
-import xk as iou
+import pyuring as iou
 
 iou.raw.copy_path(...)
 iou.raw.copy_path_dynamic(...)
@@ -114,10 +114,10 @@ with iou.raw.BufferPool.create(initial_count=8, initial_size=4096) as pool:
     ...
 ```
 
-Legacy imports are still supported:
+Direct imports:
 
 ```python
-from xk import (
+from pyuring import (
     UringError,
     UringCtx,
     BufferPool,
