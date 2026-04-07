@@ -1,0 +1,28 @@
+{
+  "rows": [
+    {
+      "operation": "Sync Write",
+      "time_s": 0.172,
+      "throughput_mbps": 581.51,
+      "speedup_vs_sync": 1.0
+    },
+    {
+      "operation": "Async Write",
+      "time_s": 0.126,
+      "throughput_mbps": 793.71,
+      "speedup_vs_sync": 1.36
+    },
+    {
+      "operation": "Sync Read",
+      "time_s": 0.0425,
+      "throughput_mbps": 2352.28,
+      "speedup_vs_sync": 1.0
+    },
+    {
+      "operation": "Async Read",
+      "time_s": 0.0455,
+      "throughput_mbps": 2198.28,
+      "speedup_vs_sync": 0.93
+    }
+  ]
+}

@@ -78,6 +78,7 @@ Full parameter tables, `UringCtx` / `BufferPool` methods, and semantics: **[USAG
 | [INSTALLATION.md](INSTALLATION.md) | Dependencies, editable install, vendored liburing, verification |
 | [USAGE.md](USAGE.md) | API specification (tables), behavior notes |
 | [examples/BENCHMARKS.md](examples/BENCHMARKS.md) | Benchmark scripts |
+| [docs/BENCHMARK_DOCKER.md](docs/BENCHMARK_DOCKER.md) | Docker + `pip install pyuring` verification, sync vs pyuring throughput, graphs |
 
 ## Verification
 
