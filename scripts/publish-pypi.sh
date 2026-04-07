@@ -2,24 +2,32 @@
 # Upload pyuring to PyPI. Never use "twine upload dist/*" — stray directories
 # under dist/ (e.g. manylinux-out) break Twine with:
 #   InvalidDistribution: Unknown distribution format: 'manylinux-out'
+#
+# PyPI rejects bare "linux_x86_64" binary wheels (400 unsupported platform tag).
+# Only manylinux*/musllinux wheels are accepted for Linux binaries. This script
+# uploads the source distribution (.tar.gz) so `pip install` builds from source.
+# To publish wheels later, build with auditwheel/cibuildwheel and upload separately.
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 
-# Clean dist so we never upload mixed versions or stray dirs (e.g. manylinux-out/)
 rm -rf dist
 mkdir -p dist
 
 python3 -m build
 
 shopt -s nullglob
-artifacts=(dist/pyuring-*.whl dist/pyuring-*.tar.gz)
+sdists=(dist/pyuring-*.tar.gz)
+wheels=(dist/pyuring-*.whl)
 shopt -u nullglob
 
-if [[ ${#artifacts[@]} -eq 0 ]]; then
-  echo "error: no dist/pyuring-*.whl or dist/pyuring-*.tar.gz after build" >&2
+if [[ ${#sdists[@]} -eq 0 ]]; then
+  echo "error: no dist/pyuring-*.tar.gz after build" >&2
   exit 1
 fi
 
-python3 -m twine check "${artifacts[@]}"
-exec python3 -m twine upload "${artifacts[@]}" "$@"
+# Validate everything we built (wheel + sdist)
+python3 -m twine check dist/pyuring-*.whl dist/pyuring-*.tar.gz
+
+# PyPI: sdist only (see header comment)
+exec python3 -m twine upload "${sdists[@]}" "$@"

@@ -124,12 +124,12 @@ export TWINE_PASSWORD='pypi-…'   # your API token; do not commit this
 
 Optional: `./scripts/publish-pypi.sh --verbose`
 
-**Manual equivalent:**
+**Manual equivalent (sdist only — required for PyPI):** PyPI **rejects** wheels tagged `linux_x86_64` (not `manylinux_*`). Upload the **`.tar.gz`** so users build from source; use **auditwheel** / **cibuildwheel** if you later publish Linux wheels.
 
 ```bash
 rm -rf dist && python3 -m build
 python3 -m twine check dist/pyuring-*.whl dist/pyuring-*.tar.gz
-python3 -m twine upload dist/pyuring-*.whl dist/pyuring-*.tar.gz
+python3 -m twine upload dist/pyuring-*.tar.gz
 ```
 
 ## Uninstall
