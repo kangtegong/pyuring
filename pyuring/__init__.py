@@ -28,7 +28,7 @@ for _name in UAPI_CONSTANT_NAMES:
     globals()[_name] = getattr(_native, _name)
 del _name, _native
 
-__version__ = "0.1.2"
+__version__ = "0.1.3"
 
 
 class _DirectBindings(object):

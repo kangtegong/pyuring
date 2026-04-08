@@ -7,6 +7,11 @@
 # Only manylinux*/musllinux wheels are accepted for Linux binaries. This script
 # uploads the source distribution (.tar.gz) so `pip install` builds from source.
 # To publish wheels later, build with auditwheel/cibuildwheel and upload separately.
+#
+# Non-interactive upload (CI or token on disk):
+#   export TWINE_USERNAME=__token__
+#   export TWINE_PASSWORD=pypi-...   # API token from https://pypi.org/manage/account/token/
+#   ./scripts/publish-pypi.sh
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
