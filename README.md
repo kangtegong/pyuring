@@ -1,14 +1,12 @@
 # pyuring
 
-Linux-only bindings: Python loads `liburingwrap.so` through `ctypes`, and that shared library talks to the kernel via [liburing](https://github.com/axboe/liburing) / io_uring. The focus is chunky file work—copy pipelines, big writes, queued `read`/`write`, and optional buffer sizing with Python callbacks on some paths.
+Code: [github.com/kangtegong/pyuring](https://github.com/kangtegong/pyuring)
 
-It does **not** wrap all of liburing. What exists lives under `csrc/`—a C-side copy/write pipeline, `UringCtx`, `BufferPool`, that sort of thing. Good for benchmarks and experiments; don’t expect a general-purpose async FS layer.
+Linux only. Python loads `liburingwrap.so` through `ctypes`; that shared library is a thin layer over [liburing](https://github.com/axboe/liburing) and the kernel’s io_uring. You get helpers for big copies and bulk writes, read/write around real fds, and optional Python callbacks where the C side asks for a buffer size. It is not a full liburing binding—think of it as a small, opinionated slice with some of the heavy work still in `csrc/`.
 
-Repo: [github.com/kangtegong/pyuring](https://github.com/kangtegong/pyuring).
+Rough map: `pyuring/` is the package, `csrc/` builds to `liburingwrap.so`, the `Makefile` drives that build, `third_party/liburing` is there if you vendor liburing, and `examples/` holds benchmarks plus `test_dynamic_buffer.py`.
 
-## What you need
-
-A kernel that actually runs io_uring (we’ve been assuming 5.15+). Python 3.8+. To build from source: `gcc`, `make`, and liburing headers—or the vendored tree under `third_party/`.
+**Needs:** Linux (docs assume kernel 5.15+), Python 3.8+, and a working toolchain plus liburing headers when you build from source.
 
 ## Install
 
@@ -16,13 +14,19 @@ A kernel that actually runs io_uring (we’ve been assuming 5.15+). Python 3.8+.
 pip install pyuring
 ```
 
-From git: clone (submodules if you want vendored liburing), then `pip install -e .` — that build step produces the `.so`.
+From git (submodule for liburing if you use it):
 
-Headers: Debian/Ubuntu `liburing-dev`, Fedora-ish `liburing-devel`, Arch `liburing`. When the build explodes, see [INSTALLATION.md](INSTALLATION.md).
+```bash
+git clone --recursive https://github.com/kangtegong/pyuring.git
+cd pyuring
+pip install -e .
+```
 
-## Quick use
+Debian/Ubuntu: `liburing-dev`. Fedora/RHEL: `liburing-devel`. Arch: `liburing`. If the build complains, see [INSTALLATION.md](INSTALLATION.md).
 
-`copy`, `write`, `write_many` pick conservative/aggressive-ish queue depth and block size from `mode`:
+## Usage
+
+`copy`, `write`, and `write_many` pick queue depth / block size from a `mode` flag so you do not have to tune everything by hand:
 
 ```python
 import pyuring as iou
@@ -32,7 +36,7 @@ iou.write("/tmp/new.dat", total_mb=100)
 iou.write_many("/tmp/out", nfiles=10, mb_per_file=100)
 ```
 
-The same functions/classes are also grouped under `pyuring.direct` (older alias: `pyuring.raw`).
+The same primitives live under `pyuring.direct` if you want the raw knobs (`pyuring.raw` is the old name, still there).
 
 ```python
 import pyuring as iou
@@ -43,38 +47,34 @@ with iou.direct.UringCtx(entries=64) as ctx:
     ...
 ```
 
-Full API: [USAGE.md](USAGE.md).
-
-## More docs
-
-[INSTALLATION.md](INSTALLATION.md) — deps, vendored liburing, when the `.so` ends up in `pyuring/lib/`.  
-[USAGE.md](USAGE.md) — parameters, methods.  
-[examples/BENCHMARKS.md](examples/BENCHMARKS.md) — benchmark scripts.
+Full API tables: [USAGE.md](USAGE.md). Install and build notes: [INSTALLATION.md](INSTALLATION.md). Benchmark invocations: [examples/BENCHMARKS.md](examples/BENCHMARKS.md).
 
 ## Tests
+
+After a local build:
 
 ```bash
 make && python3 examples/test_dynamic_buffer.py
 ```
 
-If you `pip install pyuring` but still run scripts from inside a checkout, Python may import the **tree** first and miss the built `.so`. Run examples from somewhere that isn’t the repo root, or drop the repo from `PYTHONPATH`, so you actually hit the installed package.
+If you installed from PyPI and want to run those scripts from a checkout, run them from a directory that does **not** put the repo root on `PYTHONPATH` first—otherwise `import pyuring` can pick up the tree without a built `.so` and fail.
 
-### Docker / PyPI smoke
+We also smoke-tested `pip install pyuring` inside Docker on Ubuntu 22.04, Debian bookworm, and Fedora 40 (privileged container, liburing headers, example scripts copied to something like `/proj/examples/` so imports resolve to site-packages). `test_dynamic_buffer.py` passed on all three.
 
-We’ve run the PyPI sdist in Docker with `--privileged` (io_uring often dies without it), liburing dev packages installed, and only the example scripts copied to e.g. `/proj/examples/` so imports resolve to site-packages. Ubuntu 22.04, Debian bookworm, Fedora 40—all passed `test_dynamic_buffer.py` that way.
+## Benchmark vs plain `os` read/write
 
-## Benchmark (rough)
+[`examples/bench_async_vs_sync.py`](examples/bench_async_vs_sync.py) times two implementations of the same pattern: chunked read/write over the same files. One path uses `os.open` / `os.write` / `os.read` in the obvious synchronous loop. The other uses `UringCtx` and `BufferPool` on top of io_uring. That is the comparison—it is **not** meant to mirror `asyncio` or `aiofiles`.
 
-[`bench_async_vs_sync.py`](examples/bench_async_vs_sync.py) pits plain synchronous `os.open` / `os.write` / `os.read` loops against `UringCtx` + `BufferPool` on the same file set. That’s **not** “vs asyncio” or aiofiles—just blocking POSIX-style I/O vs this library’s io_uring path. With `--no-odirect` you’re mostly in page-cache territory.
-
-Numbers below are total wall time (sync write+read vs async write+read), 8×2 MiB files, `--no-odirect`, 3 repeats—same Docker setup as above. Your box will differ.
+With `--no-odirect` you mostly hit the page cache. The chart is total wall time (write+read) for 8×2 MiB files, three averaged runs, in those Docker setups:
 
 ```mermaid
 xychart-beta
-    title "Total time ratio (sync vs pyuring), rough"
+    title "Total time — pyuring vs sync os read/write (same script)"
     x-axis ["Ubuntu 22.04", "Debian 12", "Fedora 40"]
-    y-axis "×" 1.2 --> 1.32
+    y-axis "× faster" 1.2 --> 1.32
     bar [1.25, 1.29, 1.24]
 ```
 
-Reproduce: `python3 examples/bench_async_vs_sync.py --num-files 8 --file-size-mb 2 --no-odirect --repeats 3`
+Your numbers will move with CPU, disk, and kernel. To reproduce:
+
+`python3 examples/bench_async_vs_sync.py --num-files 8 --file-size-mb 2 --no-odirect --repeats 3`
