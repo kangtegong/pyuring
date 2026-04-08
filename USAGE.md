@@ -14,6 +14,9 @@ This document describes the public Python API of the [pyuring](https://github.co
 ## Recommended patterns
 
 - **Fixed files / buffers:** Keep FDs and mutable buffers (e.g. **`bytearray`**) alive for the whole time they are registered or used in-flight. Call **`unregister_files`** / **`unregister_buffers`** (or **`close()`** on **`UringCtx`**) when done.
+- **`UringCtx` threading:** Use a single instance from **one** Python thread (the creator) unless you pass **`single_thread_check=False`** and enforce mutual exclusion yourself. The default raises **`UringError`** if another thread calls into the context. For **`wait_completion_in_executor`**, build **`UringCtx(..., single_thread_check=False)`** so the worker thread can call **`wait_completion`**.
+- **After `UringCtx.close()`:** Any further use raises **`UringError`** with a clear “closed” **`detail`** (not a silent crash from ctypes).
+- **`BufferPool` / pinned memory:** Keep the **`BufferPool`** object alive while any SQE may still reference pool memory; do not **`close()`** the pool until in-flight ops using **`get_ptr`** / **`get`** are complete. After **`close()`**, methods raise **`UringError`**.
 - **Context managers:** Prefer **`with UringCtx(...) as ctx:`** and **`with BufferPool.create(...) as pool:`** so the ring and pool are torn down reliably.
 - **Branching on failure:** `except UringError as e:` then **`if e.errno == errno.EEXIST:`** (etc.), not string parsing.
 
@@ -25,7 +28,7 @@ Import: **`from pyuring.aio import UringAsync, wait_completion_in_executor`** (a
 |--------|------|
 | **`UringCtx.ring_fd`** | Kernel fd for the completion queue; **`UringAsync`** registers it with **`asyncio.loop.add_reader`**. |
 | **`UringAsync(ctx)`** | **`async def wait_completion() -> (user_data, result)`** — same contract as **`UringCtx.wait_completion`**, integrated with the running event loop. First use pins the **current** **`asyncio`** loop; using another loop later raises **`RuntimeError`**. |
-| **`wait_completion_in_executor(ctx, executor=None)`** | **`loop.run_in_executor(executor, ctx.wait_completion)`** — thread-based; cancellation does not unblock a blocked worker thread. |
+| **`wait_completion_in_executor(ctx, executor=None)`** | **`loop.run_in_executor(executor, ctx.wait_completion)`** — thread-based; cancellation does not unblock a blocked worker thread. Use **`UringCtx(..., single_thread_check=False)`** so the executor thread may call **`wait_completion`**. |
 
 **Lifecycle**
 
@@ -131,6 +134,7 @@ Context manager wrapping one **`io_uring`** instance from the native library. Th
 | **`setup_flags`** | `0` | Bit mask of **`IORING_SETUP_*`** flags (see **Exported constants** below). Passed to **`io_uring_params.flags`**. |
 | **`sq_thread_cpu`** | `-1` | If `>= 0`, passed as **`sq_thread_cpu`** when relevant (e.g. with **`IORING_SETUP_SQPOLL`** / **`IORING_SETUP_SQ_AFF`**). |
 | **`sq_thread_idle`** | `0` | Milliseconds for SQPOLL idle behaviour when applicable; non-zero or SQPOLL may set **`sq_thread_idle`**. |
+| **`single_thread_check`** | `True` | If **`True`**, operations from a thread other than the constructor thread raise **`UringError`**. Set **`False`** only if you serialize access (e.g. **`wait_completion_in_executor`**). |
 
 Some flag combinations require a recent kernel or extra privileges (e.g. **`IORING_SETUP_SQPOLL`**). Unsupported combinations fail at construction with **`UringError`**.
 

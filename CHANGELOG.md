@@ -14,6 +14,7 @@
 ### Changed
 
 - Refactored bindings: implementation lives under `pyuring.native`; `pyuring._native` remains a compatibility shim.
+- **`UringCtx`**: optional **`single_thread_check`** (default **`True`**) records the creating thread and rejects cross-thread calls with **`UringError`**; all native entry points go through **`_ring()`** so use after **`close()`** raises a clear error. **`BufferPool`**: use-after-**`close()`** raises **`UringError`**. Documentation in **`USAGE.md`**; **`wait_completion_in_executor`** / tests use **`single_thread_check=False`** where the worker thread runs **`wait_completion`**.
 
 ### Fixed
 

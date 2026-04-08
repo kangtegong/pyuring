@@ -53,7 +53,7 @@ class TestUringAsync(unittest.TestCase):
                 f.write(data)
                 f.flush()
             try:
-                with UringCtx(entries=32) as ctx:
+                with UringCtx(entries=32, single_thread_check=False) as ctx:
                     fd = os.open(path, os.O_RDONLY)
                     try:
                         buf = bytearray(len(data))

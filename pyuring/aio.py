@@ -180,6 +180,11 @@ async def wait_completion_in_executor(
     Cancellation only affects the outer task; the worker thread may remain
     blocked until a completion appears. Prefer :class:`UringAsync` for fd-integrated,
     cancellable coordination with the event loop.
+
+    Because :meth:`~pyuring.native.uring_ctx.UringCtx.wait_completion` runs on a
+    worker thread, construct *ctx* with ``single_thread_check=False`` if you use
+    the default thread check (otherwise :exc:`~pyuring.native.errors.UringError`
+    is raised when the worker is not the creating thread).
     """
     loop = asyncio.get_running_loop()
     return await loop.run_in_executor(executor, ctx.wait_completion)

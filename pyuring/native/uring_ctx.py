@@ -6,6 +6,7 @@ import errno
 import gc
 import mmap
 import os
+import threading
 from typing import Any, List, Optional, Sequence, Tuple, Union
 from ctypes import (
     CFUNCTYPE,
@@ -27,7 +28,14 @@ from .structs import EpollEvent, FutexWaitv, KernelTimespec, OpenHow, _IOVec
 
 
 class UringCtx:
-    """Context manager for io_uring operations."""
+    """
+    Context manager for io_uring operations.
+
+    **Threading:** A single instance is **not** thread-safe. Use it from **one** thread
+    only (the thread that constructed it), unless ``single_thread_check=False``.
+    **Lifecycle:** After :meth:`close`, all operations raise :exc:`UringError` with
+    a clear "closed" detail.
+    """
 
     def __init__(
         self,
@@ -37,6 +45,7 @@ class UringCtx:
         setup_flags: int = 0,
         sq_thread_cpu: int = -1,
         sq_thread_idle: int = 0,
+        single_thread_check: bool = True,
     ):
         if lib_path is None:
             lib_path = _find_library()
@@ -314,6 +323,28 @@ class UringCtx:
             )
             raise UringError(err, "uring_create_ex", detail=detail)
         self._ctx = ctx
+        self._owner_thread_id: Optional[int] = threading.get_ident() if single_thread_check else None
+
+    def _ensure_open(self) -> None:
+        if not getattr(self, "_ctx", None):
+            raise UringError(
+                errno.EINVAL,
+                "UringCtx",
+                detail="This UringCtx is closed; create a new instance or avoid using it after close().",
+            )
+        tid = self._owner_thread_id
+        if tid is not None and threading.get_ident() != tid:
+            raise UringError(
+                errno.EINVAL,
+                "UringCtx",
+                detail="UringCtx must be used from the thread that created it "
+                "(construct with single_thread_check=False only if you serialize access yourself).",
+            )
+
+    def _ring(self) -> c_void_p:
+        """Return the native handle after :meth:`_ensure_open` (closed or wrong thread raises)."""
+        self._ensure_open()
+        return self._ctx
 
     def register_files(self, fds: Sequence[int]) -> None:
         """Register file descriptors for use with IOSQE_FIXED_FILE (indexed reads/writes)."""
@@ -321,11 +352,11 @@ class UringCtx:
         if n == 0:
             raise ValueError("fds must be non-empty")
         arr = (c_int * n)(*[int(f) for f in fds])
-        ret = self._lib.uring_register_files(self._ctx, arr, n)
+        ret = self._lib.uring_register_files(self._ring(), arr, n)
         _raise_for_neg_errno(ret, "uring_register_files")
 
     def unregister_files(self) -> None:
-        ret = self._lib.uring_unregister_files(self._ctx)
+        ret = self._lib.uring_unregister_files(self._ring())
         _raise_for_neg_errno(ret, "uring_unregister_files")
 
     def register_buffers(self, buffers: Sequence[Any]) -> None:
@@ -351,12 +382,12 @@ class UringCtx:
             keep.append(arr)
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(mv.nbytes)
-        ret = self._lib.uring_register_buffers(self._ctx, iov, n)
+        ret = self._lib.uring_register_buffers(self._ring(), iov, n)
         _raise_for_neg_errno(ret, "uring_register_buffers")
         self._buffer_keepalive = keep
 
     def unregister_buffers(self) -> None:
-        ret = self._lib.uring_unregister_buffers(self._ctx)
+        ret = self._lib.uring_unregister_buffers(self._ring())
         _raise_for_neg_errno(ret, "uring_unregister_buffers")
         self._buffer_keepalive.clear()
 
@@ -364,7 +395,7 @@ class UringCtx:
         """Read using registered file index and registered buffer index (READ_FIXED + IOSQE_FIXED_FILE)."""
         arr = (ctypes.c_char * len(buf)).from_buffer(buf)
         ret = self._lib.uring_read_fixed_sync(
-            self._ctx, int(file_index), ctypes.cast(arr, c_void_p), len(buf), int(offset), int(buf_index)
+            self._ring(), int(file_index), ctypes.cast(arr, c_void_p), len(buf), int(offset), int(buf_index)
         )
         _raise_for_neg_errno(ret, "uring_read_fixed_sync")
         return int(ret)
@@ -373,21 +404,21 @@ class UringCtx:
         """Write using registered file index; data must be the same memory as registered buffer buf_index."""
         arr = (ctypes.c_char * len(data)).from_buffer(data)
         ret = self._lib.uring_write_fixed_sync(
-            self._ctx, int(file_index), ctypes.cast(arr, c_void_p), len(data), int(offset), int(buf_index)
+            self._ring(), int(file_index), ctypes.cast(arr, c_void_p), len(data), int(offset), int(buf_index)
         )
         _raise_for_neg_errno(ret, "uring_write_fixed_sync")
         return int(ret)
 
     def probe_opcode_supported(self, opcode: int) -> bool:
         """Return True if the kernel reports this opcode as supported (IORING_REGISTER_PROBE)."""
-        ret = self._lib.uring_probe_opcode_supported(self._ctx, int(opcode))
+        ret = self._lib.uring_probe_opcode_supported(self._ring(), int(opcode))
         if ret < 0:
             _raise_for_neg_errno(ret, "uring_probe_opcode_supported")
         return bool(ret)
 
     def probe_last_op(self) -> int:
         """Highest opcode probe slot (see io_uring_probe.last_op)."""
-        ret = self._lib.uring_probe_last_op(self._ctx)
+        ret = self._lib.uring_probe_last_op(self._ring())
         _raise_for_neg_errno(ret, "uring_probe_last_op")
         return int(ret)
 
@@ -396,14 +427,14 @@ class UringCtx:
         lo = self.probe_last_op()
         n = lo + 1
         buf = (ctypes.c_ubyte * n)()
-        ret = self._lib.uring_probe_supported_mask(self._ctx, ctypes.cast(buf, c_void_p), n)
+        ret = self._lib.uring_probe_supported_mask(self._ring(), ctypes.cast(buf, c_void_p), n)
         if ret < 0:
             _raise_for_neg_errno(ret, "uring_probe_supported_mask")
         return bytes(buf)
 
     def nop(self) -> None:
         """IORING_OP_NOP: submit a no-op and wait for its completion."""
-        ret = self._lib.uring_nop_sync(self._ctx)
+        ret = self._lib.uring_nop_sync(self._ring())
         _raise_for_neg_errno(ret, "uring_nop_sync")
 
     # --- Extended synchronous opcodes (readv, vfs, sockets, splice, timeout, link) ---
@@ -423,7 +454,7 @@ class UringCtx:
             keep.append(arr)
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(mv.nbytes)
-        ret = self._lib.uring_readv_sync(self._ctx, int(fd), iov, n, int(offset))
+        ret = self._lib.uring_readv_sync(self._ring(), int(fd), iov, n, int(offset))
         _raise_for_neg_errno(ret, "uring_readv_sync")
         return int(ret)
 
@@ -446,30 +477,30 @@ class UringCtx:
             keep.append(arr)
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(len(ba))
-        ret = self._lib.uring_writev_sync(self._ctx, int(fd), iov, n, int(offset))
+        ret = self._lib.uring_writev_sync(self._ring(), int(fd), iov, n, int(offset))
         _raise_for_neg_errno(ret, "uring_writev_sync")
         return int(ret)
 
     def openat(self, path: str, flags: int, mode: int = 0o644, *, dir_fd: int = AT_FDCWD) -> int:
         """IORING_OP_OPENAT: returns new file descriptor."""
-        ret = self._lib.uring_openat_sync(self._ctx, int(dir_fd), path.encode(), int(flags), int(mode) & 0xFFFFFFFF)
+        ret = self._lib.uring_openat_sync(self._ring(), int(dir_fd), path.encode(), int(flags), int(mode) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_openat_sync")
         return int(ret)
 
     def close_fd(self, fd: int) -> None:
         """IORING_OP_CLOSE."""
-        ret = self._lib.uring_close_sync(self._ctx, int(fd))
+        ret = self._lib.uring_close_sync(self._ring(), int(fd))
         _raise_for_neg_errno(ret, "uring_close_sync")
 
     def fsync_fd(self, fd: int, *, datasync: bool = False) -> None:
         """IORING_OP_FSYNC."""
         fl = IORING_FSYNC_DATASYNC if datasync else 0
-        ret = self._lib.uring_fsync_sync(self._ctx, int(fd), fl)
+        ret = self._lib.uring_fsync_sync(self._ring(), int(fd), fl)
         _raise_for_neg_errno(ret, "uring_fsync_sync")
 
     def fallocate_fd(self, fd: int, mode: int, offset: int, length: int) -> None:
         """IORING_OP_FALLOCATE."""
-        ret = self._lib.uring_fallocate_sync(self._ctx, int(fd), int(mode), int(offset), int(length))
+        ret = self._lib.uring_fallocate_sync(self._ring(), int(fd), int(mode), int(offset), int(length))
         _raise_for_neg_errno(ret, "uring_fallocate_sync")
 
     def statx(
@@ -483,30 +514,30 @@ class UringCtx:
         """IORING_OP_STATX: returns stx_size via native helper (full struct in internal buffer)."""
         buf = (ctypes.c_byte * 512)()
         ret = self._lib.uring_statx_sync(
-            self._ctx, int(dir_fd), path.encode(), int(flags), int(mask) & 0xFFFFFFFF, ctypes.cast(buf, c_void_p)
+            self._ring(), int(dir_fd), path.encode(), int(flags), int(mask) & 0xFFFFFFFF, ctypes.cast(buf, c_void_p)
         )
         _raise_for_neg_errno(ret, "uring_statx_sync")
         return int(self._lib.uring_statx_stx_size(ctypes.cast(buf, c_void_p)))
 
     def renameat(self, old_path: str, new_path: str, *, old_dir_fd: int = AT_FDCWD, new_dir_fd: int = AT_FDCWD, flags: int = 0) -> None:
         ret = self._lib.uring_renameat_sync(
-            self._ctx, int(old_dir_fd), old_path.encode(), int(new_dir_fd), new_path.encode(), int(flags) & 0xFFFFFFFF
+            self._ring(), int(old_dir_fd), old_path.encode(), int(new_dir_fd), new_path.encode(), int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_renameat_sync")
 
     def unlinkat(self, path: str, *, dir_fd: int = AT_FDCWD, flags: int = 0) -> None:
-        ret = self._lib.uring_unlinkat_sync(self._ctx, int(dir_fd), path.encode(), int(flags))
+        ret = self._lib.uring_unlinkat_sync(self._ring(), int(dir_fd), path.encode(), int(flags))
         _raise_for_neg_errno(ret, "uring_unlinkat_sync")
 
     def mkdirat(self, path: str, mode: int = 0o755, *, dir_fd: int = AT_FDCWD) -> None:
-        ret = self._lib.uring_mkdirat_sync(self._ctx, int(dir_fd), path.encode(), int(mode) & 0xFFFFFFFF)
+        ret = self._lib.uring_mkdirat_sync(self._ring(), int(dir_fd), path.encode(), int(mode) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_mkdirat_sync")
 
     def send(self, fd: int, data: bytes, flags: int = 0) -> int:
         """IORING_OP_SEND."""
         buf = (ctypes.c_char * len(data)).from_buffer_copy(data)
         ret = self._lib.uring_send_sync(
-            self._ctx, int(fd), ctypes.cast(buf, c_void_p), len(data), int(flags) & 0xFFFFFFFF
+            self._ring(), int(fd), ctypes.cast(buf, c_void_p), len(data), int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_send_sync")
         return int(ret)
@@ -514,7 +545,7 @@ class UringCtx:
     def recv(self, fd: int, buf: bytearray, flags: int = 0) -> int:
         """IORING_OP_RECV."""
         arr = (ctypes.c_char * len(buf)).from_buffer(buf)
-        ret = self._lib.uring_recv_sync(self._ctx, int(fd), ctypes.cast(arr, c_void_p), len(buf), int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_recv_sync(self._ring(), int(fd), ctypes.cast(arr, c_void_p), len(buf), int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_recv_sync")
         return int(ret)
 
@@ -523,7 +554,7 @@ class UringCtx:
         storage = (ctypes.c_byte * 128)()
         alen = c_uint(ctypes.sizeof(storage))
         ret = self._lib.uring_accept_sync(
-            self._ctx, int(fd), ctypes.cast(storage, c_void_p), ctypes.byref(alen), int(flags)
+            self._ring(), int(fd), ctypes.cast(storage, c_void_p), ctypes.byref(alen), int(flags)
         )
         _raise_for_neg_errno(ret, "uring_accept_sync")
         return int(ret), bytes(storage)[: int(alen.value)]
@@ -532,12 +563,12 @@ class UringCtx:
         """IORING_OP_CONNECT: addr is sockaddr bytes (e.g. from socket.pack)."""
         buf = (ctypes.c_char * max(len(addr), addr_len))()
         ctypes.memmove(buf, addr, len(addr))
-        ret = self._lib.uring_connect_sync(self._ctx, int(fd), ctypes.cast(buf, c_void_p), int(addr_len))
+        ret = self._lib.uring_connect_sync(self._ring(), int(fd), ctypes.cast(buf, c_void_p), int(addr_len))
         _raise_for_neg_errno(ret, "uring_connect_sync")
 
     def shutdown(self, fd: int, how: int) -> None:
         """IORING_OP_SHUTDOWN (how: socket.SHUT_*)."""
-        ret = self._lib.uring_shutdown_sync(self._ctx, int(fd), int(how))
+        ret = self._lib.uring_shutdown_sync(self._ring(), int(fd), int(how))
         _raise_for_neg_errno(ret, "uring_shutdown_sync")
 
     def splice(
@@ -551,7 +582,7 @@ class UringCtx:
     ) -> int:
         """IORING_OP_SPLICE."""
         ret = self._lib.uring_splice_sync(
-            self._ctx,
+            self._ring(),
             int(fd_in),
             int(off_in),
             int(fd_out),
@@ -565,7 +596,7 @@ class UringCtx:
     def tee(self, fd_in: int, fd_out: int, nbytes: int, flags: int = 0) -> int:
         """IORING_OP_TEE: copy pipe-to-pipe (see tee(2)); returns bytes duplicated or 0."""
         ret = self._lib.uring_tee_sync(
-            self._ctx, int(fd_in), int(fd_out), int(nbytes) & 0xFFFFFFFF, int(flags) & 0xFFFFFFFF
+            self._ring(), int(fd_in), int(fd_out), int(nbytes) & 0xFFFFFFFF, int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_tee_sync")
         return int(ret)
@@ -573,19 +604,19 @@ class UringCtx:
     def poll_add(self, fd: int, poll_mask: int, *, user_data: int = 42_000) -> int:
         """IORING_OP_POLL_ADD: wait for readiness; returns event bitmask (e.g. POLLIN from select module)."""
         ret = self._lib.uring_poll_add_sync(
-            self._ctx, int(fd), int(poll_mask) & 0xFFFFFFFF, int(user_data) & 0xFFFFFFFFFFFFFFFF
+            self._ring(), int(fd), int(poll_mask) & 0xFFFFFFFF, int(user_data) & 0xFFFFFFFFFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_poll_add_sync")
         return int(ret)
 
     def poll_remove(self, target_user_data: int) -> None:
         """IORING_OP_POLL_REMOVE: cancel poll/multishot installed with the same user_data."""
-        ret = self._lib.uring_poll_remove_sync(self._ctx, int(target_user_data) & 0xFFFFFFFFFFFFFFFF)
+        ret = self._lib.uring_poll_remove_sync(self._ring(), int(target_user_data) & 0xFFFFFFFFFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_poll_remove_sync")
 
     def symlinkat(self, target: str, link_path: str, *, new_dir_fd: int = AT_FDCWD) -> None:
         """IORING_OP_SYMLINKAT."""
-        ret = self._lib.uring_symlinkat_sync(self._ctx, target.encode(), int(new_dir_fd), link_path.encode())
+        ret = self._lib.uring_symlinkat_sync(self._ring(), target.encode(), int(new_dir_fd), link_path.encode())
         _raise_for_neg_errno(ret, "uring_symlinkat_sync")
 
     def linkat(
@@ -599,7 +630,7 @@ class UringCtx:
     ) -> None:
         """IORING_OP_LINKAT (hard link)."""
         ret = self._lib.uring_linkat_sync(
-            self._ctx,
+            self._ring(),
             int(old_dir_fd),
             old_path.encode(),
             int(new_dir_fd),
@@ -611,7 +642,7 @@ class UringCtx:
     def sync_file_range(self, fd: int, length: int, offset: int, flags: int) -> None:
         """IORING_OP_SYNC_FILE_RANGE (see SYNC_FILE_RANGE_* constants)."""
         ret = self._lib.uring_sync_file_range_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             int(length) & 0xFFFFFFFF,
             int(offset) & 0xFFFFFFFFFFFFFFFF,
@@ -622,7 +653,7 @@ class UringCtx:
     def fadvise(self, fd: int, offset: int, length: int, advice: int) -> None:
         """IORING_OP_FADVISE (POSIX_FADV_*)."""
         ret = self._lib.uring_fadvise_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             int(offset) & 0xFFFFFFFFFFFFFFFF,
             int(length) & 0xFFFFFFFF,
@@ -641,7 +672,7 @@ class UringCtx:
         n = len(buf)
         arr = (ctypes.c_char * n).from_buffer(buf)
         try:
-            ret = self._lib.uring_madvise_sync(self._ctx, ctypes.cast(arr, c_void_p), n, int(advice))
+            ret = self._lib.uring_madvise_sync(self._ring(), ctypes.cast(arr, c_void_p), n, int(advice))
             _raise_for_neg_errno(ret, "uring_madvise_sync")
         finally:
             del arr
@@ -650,7 +681,7 @@ class UringCtx:
 
     def async_cancel_fd(self, fd: int, flags: int = 0) -> None:
         """IORING_OP_ASYNC_CANCEL with IORING_ASYNC_CANCEL_FD (cancel by fd)."""
-        ret = self._lib.uring_async_cancel_fd_sync(self._ctx, int(fd), int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_async_cancel_fd_sync(self._ring(), int(fd), int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_async_cancel_fd_sync")
 
     def sendmsg_iov(self, fd: int, parts: Sequence[Any], flags: int = 0) -> int:
@@ -672,7 +703,7 @@ class UringCtx:
             keep.append(arr)
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(len(ba))
-        ret = self._lib.uring_sendmsg_iov_sync(self._ctx, int(fd), iov, n, int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_sendmsg_iov_sync(self._ring(), int(fd), iov, n, int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_sendmsg_iov_sync")
         return int(ret)
 
@@ -691,14 +722,14 @@ class UringCtx:
             keep.append(arr)
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(mv.nbytes)
-        ret = self._lib.uring_recvmsg_iov_sync(self._ctx, int(fd), iov, n, int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_recvmsg_iov_sync(self._ring(), int(fd), iov, n, int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_recvmsg_iov_sync")
         return int(ret)
 
     def socket(self, domain: int, type: int, protocol: int = 0, flags: int = 0) -> int:
         """IORING_OP_SOCKET: returns new fd from cqe.res."""
         ret = self._lib.uring_socket_sync(
-            self._ctx, int(domain), int(type), int(protocol), int(flags) & 0xFFFFFFFF
+            self._ring(), int(domain), int(type), int(protocol), int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_socket_sync")
         return int(ret)
@@ -706,7 +737,7 @@ class UringCtx:
     def pipe(self, pipe_flags: int = 0) -> Tuple[int, int]:
         """IORING_OP_PIPE: returns (read_fd, write_fd)."""
         fds = (c_int * 2)()
-        ret = self._lib.uring_pipe_sync(self._ctx, fds, int(pipe_flags))
+        ret = self._lib.uring_pipe_sync(self._ring(), fds, int(pipe_flags))
         _raise_for_neg_errno(ret, "uring_pipe_sync")
         return int(fds[0]), int(fds[1])
 
@@ -714,17 +745,17 @@ class UringCtx:
         """IORING_OP_BIND: addr is sockaddr bytes."""
         buf = (ctypes.c_char * max(len(addr), addr_len))()
         ctypes.memmove(buf, addr, len(addr))
-        ret = self._lib.uring_bind_sync(self._ctx, int(fd), ctypes.cast(buf, c_void_p), int(addr_len))
+        ret = self._lib.uring_bind_sync(self._ring(), int(fd), ctypes.cast(buf, c_void_p), int(addr_len))
         _raise_for_neg_errno(ret, "uring_bind_sync")
 
     def listen(self, fd: int, backlog: int) -> None:
         """IORING_OP_LISTEN."""
-        ret = self._lib.uring_listen_sync(self._ctx, int(fd), int(backlog))
+        ret = self._lib.uring_listen_sync(self._ring(), int(fd), int(backlog))
         _raise_for_neg_errno(ret, "uring_listen_sync")
 
     def openat2(self, path: str, how: OpenHow, *, dir_fd: int = AT_FDCWD) -> int:
         """IORING_OP_OPENAT2: returns new fd."""
-        ret = self._lib.uring_openat2_sync(self._ctx, int(dir_fd), path.encode(), ctypes.byref(how))
+        ret = self._lib.uring_openat2_sync(self._ring(), int(dir_fd), path.encode(), ctypes.byref(how))
         _raise_for_neg_errno(ret, "uring_openat2_sync")
         return int(ret)
 
@@ -733,14 +764,14 @@ class UringCtx:
         ts = KernelTimespec()
         ts.tv_sec = int(sec)
         ts.tv_nsec = int(nsec)
-        ret = self._lib.uring_link_timeout_sync(self._ctx, ctypes.byref(ts), int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_link_timeout_sync(self._ring(), ctypes.byref(ts), int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_link_timeout_sync")
 
     def getxattr(self, path: str, name: str, value: bytearray) -> int:
         """IORING_OP_GETXATTR: returns value length or error."""
         arr = (ctypes.c_char * len(value)).from_buffer(value)
         ret = self._lib.uring_getxattr_sync(
-            self._ctx, name.encode(), ctypes.cast(arr, c_void_p), path.encode(), len(value)
+            self._ring(), name.encode(), ctypes.cast(arr, c_void_p), path.encode(), len(value)
         )
         _raise_for_neg_errno(ret, "uring_getxattr_sync")
         return int(ret)
@@ -749,14 +780,14 @@ class UringCtx:
         """IORING_OP_SETXATTR."""
         buf = (ctypes.c_char * len(value)).from_buffer_copy(value)
         ret = self._lib.uring_setxattr_sync(
-            self._ctx, name.encode(), buf, path.encode(), int(flags), len(value)
+            self._ring(), name.encode(), buf, path.encode(), int(flags), len(value)
         )
         _raise_for_neg_errno(ret, "uring_setxattr_sync")
 
     def fgetxattr(self, fd: int, name: str, value: bytearray) -> int:
         """IORING_OP_FGETXATTR."""
         arr = (ctypes.c_char * len(value)).from_buffer(value)
-        ret = self._lib.uring_fgetxattr_sync(self._ctx, int(fd), name.encode(), ctypes.cast(arr, c_void_p), len(value))
+        ret = self._lib.uring_fgetxattr_sync(self._ring(), int(fd), name.encode(), ctypes.cast(arr, c_void_p), len(value))
         _raise_for_neg_errno(ret, "uring_fgetxattr_sync")
         return int(ret)
 
@@ -764,7 +795,7 @@ class UringCtx:
         """IORING_OP_FSETXATTR."""
         buf = (ctypes.c_char * len(value)).from_buffer_copy(value)
         ret = self._lib.uring_fsetxattr_sync(
-            self._ctx, int(fd), name.encode(), buf, int(flags), len(value)
+            self._ring(), int(fd), name.encode(), buf, int(flags), len(value)
         )
         _raise_for_neg_errno(ret, "uring_fsetxattr_sync")
 
@@ -774,7 +805,7 @@ class UringCtx:
             evp = ctypes.byref(event)
         else:
             evp = None
-        ret = self._lib.uring_epoll_ctl_sync(self._ctx, int(epfd), int(fd), int(op), evp)
+        ret = self._lib.uring_epoll_ctl_sync(self._ring(), int(epfd), int(fd), int(op), evp)
         _raise_for_neg_errno(ret, "uring_epoll_ctl_sync")
 
     def provide_buffers(self, buf, buf_len_each: int, nr: int, bgid: int, bid: int = 0) -> None:
@@ -788,36 +819,36 @@ class UringCtx:
         arr = (ctypes.c_char * need).from_buffer(buf)
         self._buffer_keepalive.append(arr)
         ret = self._lib.uring_provide_buffers_sync(
-            self._ctx, ctypes.cast(arr, c_void_p), int(buf_len_each), int(nr), int(bgid), int(bid)
+            self._ring(), ctypes.cast(arr, c_void_p), int(buf_len_each), int(nr), int(bgid), int(bid)
         )
         _raise_for_neg_errno(ret, "uring_provide_buffers_sync")
 
     def remove_buffers(self, nr: int, bgid: int) -> None:
         """IORING_OP_REMOVE_BUFFERS."""
-        ret = self._lib.uring_remove_buffers_sync(self._ctx, int(nr), int(bgid))
+        ret = self._lib.uring_remove_buffers_sync(self._ring(), int(nr), int(bgid))
         _raise_for_neg_errno(ret, "uring_remove_buffers_sync")
 
     def msg_ring(self, fd: int, len_val: int, data: int, flags: int = 0) -> None:
         """IORING_OP_MSG_RING (target ring fd)."""
         ret = self._lib.uring_msg_ring_sync(
-            self._ctx, int(fd), int(len_val) & 0xFFFFFFFF, int(data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
+            self._ring(), int(fd), int(len_val) & 0xFFFFFFFF, int(data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_msg_ring_sync")
 
     def ftruncate(self, fd: int, length: int) -> None:
         """IORING_OP_FTRUNCATE."""
-        ret = self._lib.uring_ftruncate_sync(self._ctx, int(fd), int(length))
+        ret = self._lib.uring_ftruncate_sync(self._ring(), int(fd), int(length))
         _raise_for_neg_errno(ret, "uring_ftruncate_sync")
 
     def nop128(self) -> None:
         """IORING_OP_NOP128 (requires IORING_SETUP_SQE128 / mixed SQE mode)."""
-        ret = self._lib.uring_nop128_sync(self._ctx)
+        ret = self._lib.uring_nop128_sync(self._ring())
         _raise_for_neg_errno(ret, "uring_nop128_sync")
 
     def poll_update(self, old_user_data: int, new_user_data: int, poll_mask: int, flags: int = 0) -> None:
         """IORING_OP_POLL_REMOVE variant: update poll mask / user_data."""
         ret = self._lib.uring_poll_update_sync(
-            self._ctx,
+            self._ring(),
             int(old_user_data) & 0xFFFFFFFFFFFFFFFF,
             int(new_user_data) & 0xFFFFFFFFFFFFFFFF,
             int(poll_mask) & 0xFFFFFFFF,
@@ -831,7 +862,7 @@ class UringCtx:
         ts.tv_sec = int(sec)
         ts.tv_nsec = int(nsec)
         ret = self._lib.uring_timeout_update_sync(
-            self._ctx,
+            self._ring(),
             ctypes.byref(ts),
             int(target_user_data) & 0xFFFFFFFFFFFFFFFF,
             int(flags) & 0xFFFFFFFF,
@@ -842,7 +873,7 @@ class UringCtx:
         """IORING_OP_RECV with IORING_RECV_MULTISHOT."""
         arr = (ctypes.c_char * len(buf)).from_buffer(buf)
         ret = self._lib.uring_recv_multishot_sync(
-            self._ctx, int(fd), ctypes.cast(arr, c_void_p), len(buf), int(msg_flags)
+            self._ring(), int(fd), ctypes.cast(arr, c_void_p), len(buf), int(msg_flags)
         )
         _raise_for_neg_errno(ret, "uring_recv_multishot_sync")
         return int(ret)
@@ -851,7 +882,7 @@ class UringCtx:
         """IORING_OP_SEND_ZC."""
         buf = (ctypes.c_char * len(data)).from_buffer_copy(data)
         ret = self._lib.uring_send_zc_sync(
-            self._ctx, int(fd), ctypes.cast(buf, c_void_p), len(data), int(msg_flags), int(zc_flags) & 0xFFFFFFFF
+            self._ring(), int(fd), ctypes.cast(buf, c_void_p), len(data), int(msg_flags), int(zc_flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_send_zc_sync")
         return int(ret)
@@ -861,7 +892,7 @@ class UringCtx:
         mv = memoryview(data)
         arr = (ctypes.c_char * mv.nbytes).from_buffer(data)
         ret = self._lib.uring_send_zc_fixed_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             ctypes.cast(arr, c_void_p),
             mv.nbytes,
@@ -891,7 +922,7 @@ class UringCtx:
             keep.append(arr)
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(len(ba))
-        ret = self._lib.uring_sendmsg_zc_iov_sync(self._ctx, int(fd), iov, n, int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_sendmsg_zc_iov_sync(self._ring(), int(fd), iov, n, int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_sendmsg_zc_iov_sync")
         return int(ret)
 
@@ -915,7 +946,7 @@ class UringCtx:
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(len(ba))
         ret = self._lib.uring_sendmsg_zc_fixed_iov_sync(
-            self._ctx, int(fd), iov, n, int(flags) & 0xFFFFFFFF, int(buf_index) & 0xFFFFFFFF
+            self._ring(), int(fd), iov, n, int(flags) & 0xFFFFFFFF, int(buf_index) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_sendmsg_zc_fixed_iov_sync")
         return int(ret)
@@ -924,7 +955,7 @@ class UringCtx:
         """IORING_OP_RECV_ZC (raw layout; often used with buffer groups / zcrx)."""
         arr = (ctypes.c_char * len(buf)).from_buffer(buf)
         ret = self._lib.uring_recv_zc_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             ctypes.cast(arr, c_void_p),
             len(buf),
@@ -949,7 +980,7 @@ class UringCtx:
             keep.append(arr)
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(mv.nbytes)
-        ret = self._lib.uring_recvmsg_multishot_iov_sync(self._ctx, int(fd), iov, n, int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_recvmsg_multishot_iov_sync(self._ring(), int(fd), iov, n, int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_recvmsg_multishot_iov_sync")
         return int(ret)
 
@@ -959,7 +990,7 @@ class UringCtx:
         if n <= 0:
             raise ValueError("maxevents must be positive")
         arr = (EpollEvent * n)()
-        ret = self._lib.uring_epoll_wait_sync(self._ctx, int(epfd), arr, n, int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_epoll_wait_sync(self._ring(), int(epfd), arr, n, int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_epoll_wait_sync")
         k = min(int(ret), n) if ret >= 0 else 0
         return int(ret), [arr[i] for i in range(k)]
@@ -972,7 +1003,7 @@ class UringCtx:
                 raise ValueError(f"info must be at least {SIGINFO_T_SIZE} bytes")
             inf = ctypes.cast((ctypes.c_char * len(info)).from_buffer(info), c_void_p)
         ret = self._lib.uring_waitid_sync(
-            self._ctx, int(idtype), int(pid), inf, int(options), int(flags) & 0xFFFFFFFF
+            self._ring(), int(idtype), int(pid), inf, int(options), int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_waitid_sync")
         return int(ret)
@@ -981,7 +1012,7 @@ class UringCtx:
         """IORING_OP_FUTEX_WAKE; uaddr must hold at least 4 writable bytes (aligned u32)."""
         w = (ctypes.c_uint32 * 1).from_buffer(uaddr)
         ret = self._lib.uring_futex_wake_sync(
-            self._ctx,
+            self._ring(),
             ctypes.byref(w[0]),
             int(val) & 0xFFFFFFFFFFFFFFFF,
             int(mask) & 0xFFFFFFFFFFFFFFFF,
@@ -995,7 +1026,7 @@ class UringCtx:
         """IORING_OP_FUTEX_WAIT."""
         w = (ctypes.c_uint32 * 1).from_buffer(uaddr)
         ret = self._lib.uring_futex_wait_sync(
-            self._ctx,
+            self._ring(),
             ctypes.byref(w[0]),
             int(val) & 0xFFFFFFFFFFFFFFFF,
             int(mask) & 0xFFFFFFFFFFFFFFFF,
@@ -1013,19 +1044,19 @@ class UringCtx:
         arr = (FutexWaitv * n)()
         for i, e in enumerate(entries):
             arr[i] = e
-        ret = self._lib.uring_futex_waitv_sync(self._ctx, arr, int(n), int(flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_futex_waitv_sync(self._ring(), arr, int(n), int(flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_futex_waitv_sync")
         return int(ret)
 
     def uring_cmd(self, cmd_op: int, fd: int) -> int:
         """IORING_OP_URING_CMD."""
-        ret = self._lib.uring_uring_cmd_sync(self._ctx, int(cmd_op), int(fd))
+        ret = self._lib.uring_uring_cmd_sync(self._ring(), int(cmd_op), int(fd))
         _raise_for_neg_errno(ret, "uring_uring_cmd_sync")
         return int(ret)
 
     def uring_cmd128(self, cmd_op: int, fd: int) -> int:
         """IORING_OP_URING_CMD128."""
-        ret = self._lib.uring_uring_cmd128_sync(self._ctx, int(cmd_op), int(fd))
+        ret = self._lib.uring_uring_cmd128_sync(self._ring(), int(cmd_op), int(fd))
         _raise_for_neg_errno(ret, "uring_uring_cmd128_sync")
         return int(ret)
 
@@ -1038,7 +1069,7 @@ class UringCtx:
             ov = (ctypes.c_char * len(optval)).from_buffer_copy(optval)
             ol = int(optlen)
         ret = self._lib.uring_cmd_sock_sync(
-            self._ctx, int(cmd_op), int(fd), int(level), int(optname), ov, ol
+            self._ring(), int(cmd_op), int(fd), int(level), int(optname), ov, ol
         )
         _raise_for_neg_errno(ret, "uring_cmd_sock_sync")
         return int(ret)
@@ -1048,21 +1079,21 @@ class UringCtx:
         alen = c_uint(len(addr))
         arr = (ctypes.c_char * len(addr)).from_buffer(addr)
         ret = self._lib.uring_cmd_getsockname_sync(
-            self._ctx, int(fd), ctypes.cast(arr, c_void_p), ctypes.byref(alen), int(peer)
+            self._ring(), int(fd), ctypes.cast(arr, c_void_p), ctypes.byref(alen), int(peer)
         )
         _raise_for_neg_errno(ret, "uring_cmd_getsockname_sync")
         return int(ret)
 
     def fixed_fd_install(self, fd: int, install_flags: int = 0) -> int:
         """IORING_OP_FIXED_FD_INSTALL."""
-        ret = self._lib.uring_fixed_fd_install_sync(self._ctx, int(fd), int(install_flags) & 0xFFFFFFFF)
+        ret = self._lib.uring_fixed_fd_install_sync(self._ring(), int(fd), int(install_flags) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_fixed_fd_install_sync")
         return int(ret)
 
     def socket_direct(self, domain: int, type: int, protocol: int, file_index: int, flags: int = 0) -> int:
         """IORING_OP_SOCKET into fixed file table."""
         ret = self._lib.uring_socket_direct_sync(
-            self._ctx, int(domain), int(type), int(protocol), int(file_index) & 0xFFFFFFFF, int(flags) & 0xFFFFFFFF
+            self._ring(), int(domain), int(type), int(protocol), int(file_index) & 0xFFFFFFFF, int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_socket_direct_sync")
         return int(ret)
@@ -1070,7 +1101,7 @@ class UringCtx:
     def socket_direct_alloc(self, domain: int, type: int, protocol: int, flags: int = 0) -> int:
         """IORING_OP_SOCKET with IORING_FILE_INDEX_ALLOC."""
         ret = self._lib.uring_socket_direct_alloc_sync(
-            self._ctx, int(domain), int(type), int(protocol), int(flags) & 0xFFFFFFFF
+            self._ring(), int(domain), int(type), int(protocol), int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_socket_direct_alloc_sync")
         return int(ret)
@@ -1078,14 +1109,14 @@ class UringCtx:
     def pipe_direct(self, pipe_flags: int = 0, file_index: int = IORING_FILE_INDEX_ALLOC) -> Tuple[int, int]:
         """IORING_OP_PIPE into fixed file table."""
         fds = (c_int * 2)()
-        ret = self._lib.uring_pipe_direct_sync(self._ctx, fds, int(pipe_flags), int(file_index) & 0xFFFFFFFF)
+        ret = self._lib.uring_pipe_direct_sync(self._ring(), fds, int(pipe_flags), int(file_index) & 0xFFFFFFFF)
         _raise_for_neg_errno(ret, "uring_pipe_direct_sync")
         return int(fds[0]), int(fds[1])
 
     def msg_ring_fd(self, fd: int, source_fd: int, target_fd: int, data: int, flags: int = 0) -> None:
         """IORING_OP_MSG_RING: send fd to another ring."""
         ret = self._lib.uring_msg_ring_fd_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             int(source_fd),
             int(target_fd),
@@ -1097,14 +1128,14 @@ class UringCtx:
     def msg_ring_fd_alloc(self, fd: int, source_fd: int, data: int, flags: int = 0) -> None:
         """IORING_MSG_SEND_FD with target index allocation."""
         ret = self._lib.uring_msg_ring_fd_alloc_sync(
-            self._ctx, int(fd), int(source_fd), int(data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
+            self._ring(), int(fd), int(source_fd), int(data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_msg_ring_fd_alloc_sync")
 
     def msg_ring_cqe_flags(self, fd: int, len_val: int, data: int, flags: int, cqe_flags: int) -> None:
         """IORING_OP_MSG_RING with IORING_MSG_RING_FLAGS_PASS."""
         ret = self._lib.uring_msg_ring_cqe_flags_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             int(len_val) & 0xFFFFFFFF,
             int(data) & 0xFFFFFFFFFFFFFFFF,
@@ -1119,12 +1150,12 @@ class UringCtx:
         if n == 0:
             raise ValueError("fds must be non-empty")
         arr = (c_int * n)(*[int(f) for f in fds])
-        ret = self._lib.uring_files_update_sync(self._ctx, arr, n, int(offset))
+        ret = self._lib.uring_files_update_sync(self._ring(), arr, n, int(offset))
         _raise_for_neg_errno(ret, "uring_files_update_sync")
 
     def send_bundle(self, fd: int, length: int, msg_flags: int = 0) -> int:
         """IORING_OP_SEND with bundle (IOSQE_BUFFER_SELECT)."""
-        ret = self._lib.uring_send_bundle_sync(self._ctx, int(fd), int(length), int(msg_flags))
+        ret = self._lib.uring_send_bundle_sync(self._ring(), int(fd), int(length), int(msg_flags))
         _raise_for_neg_errno(ret, "uring_send_bundle_sync")
         return int(ret)
 
@@ -1151,7 +1182,7 @@ class UringCtx:
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(mv.nbytes)
         ret = self._lib.uring_readv_fixed_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             iov,
             n,
@@ -1189,7 +1220,7 @@ class UringCtx:
             iov[i].iov_base = ctypes.cast(arr, c_void_p)
             iov[i].iov_len = c_size_t(len(ba))
         ret = self._lib.uring_writev_fixed_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             iov,
             n,
@@ -1206,7 +1237,7 @@ class UringCtx:
         abuf = (ctypes.c_char * max(len(addr), addr_len))()
         ctypes.memmove(abuf, addr, len(addr))
         ret = self._lib.uring_sendto_sync(
-            self._ctx,
+            self._ring(),
             int(fd),
             ctypes.cast(buf, c_void_p),
             len(data),
@@ -1223,7 +1254,7 @@ class UringCtx:
         ts.tv_sec = int(sec)
         ts.tv_nsec = int(nsec)
         ret = self._lib.uring_timeout_sync(
-            self._ctx,
+            self._ring(),
             ctypes.byref(ts),
             int(count) & 0xFFFFFFFF,
             int(timeout_flags) & 0xFFFFFFFF,
@@ -1236,14 +1267,14 @@ class UringCtx:
     def timeout_remove(self, target_user_data: int, flags: int = 0) -> None:
         """IORING_OP_TIMEOUT_REMOVE."""
         ret = self._lib.uring_timeout_remove_sync(
-            self._ctx, int(target_user_data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
+            self._ring(), int(target_user_data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_timeout_remove_sync")
 
     def async_cancel(self, user_data: int, flags: int = 0) -> None:
         """IORING_OP_ASYNC_CANCEL (target user_data of pending op)."""
         ret = self._lib.uring_async_cancel_sync(
-            self._ctx, int(user_data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
+            self._ring(), int(user_data) & 0xFFFFFFFFFFFFFFFF, int(flags) & 0xFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_async_cancel_sync")
 
@@ -1251,7 +1282,7 @@ class UringCtx:
         """IOSQE_IO_LINK: read then write sharing the same buffer."""
         arr = (ctypes.c_char * len(buf)).from_buffer(buf)
         ret = self._lib.uring_link_read_write_sync(
-            self._ctx, int(fd_in), ctypes.cast(arr, c_void_p), len(buf), int(offset_in), int(fd_out), int(offset_out)
+            self._ring(), int(fd_in), ctypes.cast(arr, c_void_p), len(buf), int(offset_in), int(fd_out), int(offset_out)
         )
         _raise_for_neg_errno(ret, "uring_link_read_write_sync")
         return int(ret)
@@ -1259,18 +1290,21 @@ class UringCtx:
     def timeout_arm_remove_pair(self, sec: int = 60, nsec: int = 0, *, user_data: int = 9000) -> None:
         """Submit long timeout then remove it (two SQEs, one submit)."""
         ret = self._lib.uring_timeout_arm_remove_pair_sync(
-            self._ctx, int(sec), int(nsec), int(user_data) & 0xFFFFFFFFFFFFFFFF
+            self._ring(), int(sec), int(nsec), int(user_data) & 0xFFFFFFFFFFFFFFFF
         )
         _raise_for_neg_errno(ret, "uring_timeout_arm_remove_pair_sync")
 
     def close(self) -> None:
         """Close the io_uring context."""
         self._buffer_keepalive.clear()
-        if getattr(self, "_ctx", None):
-            self._lib.uring_destroy(self._ctx)
+        ctx = getattr(self, "_ctx", None)
+        if ctx:
+            self._lib.uring_destroy(ctx)
             self._ctx = None
+        self._owner_thread_id = None
 
     def __enter__(self):
+        self._ensure_open()
         return self
 
     def __exit__(self, exc_type, exc, tb):
@@ -1279,23 +1313,21 @@ class UringCtx:
     @property
     def ring_fd(self) -> int:
         """Kernel fd for this ring's completion side (poll/epoll, :mod:`asyncio` ``add_reader``)."""
-        if not getattr(self, "_ctx", None):
-            raise UringError(errno.EINVAL, "uring_ring_fd", detail="UringCtx is closed")
-        ret = self._lib.uring_ring_fd(self._ctx)
+        ret = self._lib.uring_ring_fd(self._ring())
         _raise_for_neg_errno(ret, "uring_ring_fd")
         return int(ret)
 
     def read(self, fd: int, length: int, offset: int = 0) -> bytes:
         """Read data from a file descriptor using io_uring."""
         buf = ctypes.create_string_buffer(length)
-        ret = self._lib.uring_read_sync(self._ctx, fd, ctypes.byref(buf), length, offset)
+        ret = self._lib.uring_read_sync(self._ring(), fd, ctypes.byref(buf), length, offset)
         _raise_for_neg_errno(ret, "uring_read_sync")
         return buf.raw[:ret]
 
     def write(self, fd: int, data: bytes, offset: int = 0) -> int:
         """Write data to a file descriptor using io_uring."""
         buf = ctypes.create_string_buffer(data, len(data))
-        ret = self._lib.uring_write_sync(self._ctx, fd, ctypes.byref(buf), len(data), offset)
+        ret = self._lib.uring_write_sync(self._ring(), fd, ctypes.byref(buf), len(data), offset)
         _raise_for_neg_errno(ret, "uring_write_sync")
         return int(ret)
 
@@ -1303,7 +1335,7 @@ class UringCtx:
         """Read multiple blocks in a batch."""
         total_len = int(block_size) * int(blocks)
         buf = ctypes.create_string_buffer(total_len)
-        ret = self._lib.uring_read_batch_sync(self._ctx, fd, ctypes.byref(buf), block_size, blocks, offset)
+        ret = self._lib.uring_read_batch_sync(self._ring(), fd, ctypes.byref(buf), block_size, blocks, offset)
         _raise_for_neg_errno(ret, "uring_read_batch_sync")
         return buf.raw[:ret]
 
@@ -1323,7 +1355,7 @@ class UringCtx:
             off_arr = arr_type(*[int(o) * int(block_size) for o in offsets])
 
         ret = self._lib.uring_read_offsets_sync(
-            self._ctx, fd, ctypes.byref(buf), block_size, ctypes.cast(off_arr, c_void_p), blocks
+            self._ring(), fd, ctypes.byref(buf), block_size, ctypes.cast(off_arr, c_void_p), blocks
         )
         _raise_for_neg_errno(ret, "uring_read_offsets_sync")
         return buf.raw[:ret]
@@ -1359,7 +1391,7 @@ class UringCtx:
         else:
             raise TypeError(f"buf must be bytes, bytearray, or tuple (ptr, size), got {type(buf)}")
 
-        ret = self._lib.uring_read_async(self._ctx, fd, buf_ptr, buf_len, offset, user_data)
+        ret = self._lib.uring_read_async(self._ring(), fd, buf_ptr, buf_len, offset, user_data)
         _raise_for_neg_errno(ret, "uring_read_async")
         return int(ret)
 
@@ -1382,7 +1414,7 @@ class UringCtx:
         elif not isinstance(buf_ptr, ctypes.c_void_p):
             buf_ptr = ctypes.c_void_p(buf_ptr)
 
-        ret = self._lib.uring_read_async(self._ctx, fd, buf_ptr, buf_len, offset, user_data)
+        ret = self._lib.uring_read_async(self._ring(), fd, buf_ptr, buf_len, offset, user_data)
         _raise_for_neg_errno(ret, "uring_read_async")
         return int(ret)
 
@@ -1404,7 +1436,7 @@ class UringCtx:
 
         # For write, we can use c_char_p since we're not modifying the data
         buf_ptr = ctypes.c_char_p(data) if isinstance(data, bytes) else (ctypes.c_char * len(data)).from_buffer(data)
-        ret = self._lib.uring_write_async(self._ctx, fd, buf_ptr, len(data), offset, user_data)
+        ret = self._lib.uring_write_async(self._ring(), fd, buf_ptr, len(data), offset, user_data)
         _raise_for_neg_errno(ret, "uring_write_async")
         return int(ret)
 
@@ -1427,7 +1459,7 @@ class UringCtx:
         elif not isinstance(buf_ptr, ctypes.c_void_p):
             buf_ptr = ctypes.c_void_p(buf_ptr)
 
-        ret = self._lib.uring_write_async(self._ctx, fd, buf_ptr, buf_len, offset, user_data)
+        ret = self._lib.uring_write_async(self._ring(), fd, buf_ptr, buf_len, offset, user_data)
         _raise_for_neg_errno(ret, "uring_write_async")
         return int(ret)
 
@@ -1445,7 +1477,7 @@ class UringCtx:
         """
         user_data = c_uint64()
         result = c_int()
-        ret = self._lib.uring_wait_completion(self._ctx, byref(user_data), byref(result))
+        ret = self._lib.uring_wait_completion(self._ring(), byref(user_data), byref(result))
         _raise_for_neg_errno(ret, "uring_wait_completion")
         return (int(user_data.value), int(result.value))
 
@@ -1463,7 +1495,7 @@ class UringCtx:
         """
         user_data = c_uint64()
         result = c_int()
-        ret = self._lib.uring_peek_completion(self._ctx, byref(user_data), byref(result))
+        ret = self._lib.uring_peek_completion(self._ring(), byref(user_data), byref(result))
         if ret == 0:
             return None  # No completion available
         _raise_for_neg_errno(ret, "uring_peek_completion")
@@ -1479,7 +1511,7 @@ class UringCtx:
         Raises:
             UringError on error
         """
-        ret = self._lib.uring_submit(self._ctx)
+        ret = self._lib.uring_submit(self._ring())
         _raise_for_neg_errno(ret, "uring_submit")
         return int(ret)
 
@@ -1496,7 +1528,7 @@ class UringCtx:
         Raises:
             UringError on error
         """
-        ret = self._lib.uring_submit_and_wait(self._ctx, wait_nr)
+        ret = self._lib.uring_submit_and_wait(self._ring(), wait_nr)
         _raise_for_neg_errno(ret, "uring_submit_and_wait")
         return int(ret)
 
