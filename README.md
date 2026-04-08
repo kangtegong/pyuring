@@ -2,9 +2,9 @@
 
 Code: [github.com/kangtegong/pyuring](https://github.com/kangtegong/pyuring)
 
-Linux only. Python loads `liburingwrap.so` through `ctypes`. That library links [liburing](https://github.com/axboe/liburing) and uses the kernel io_uring interface. The package exposes file copy and bulk-write entry points, read/write operations on open file descriptors, and optional Python callbacks used by the native code when dynamic buffer sizing is enabled. The Python API does not cover all of liburing; additional logic resides in `csrc/`.
+Linux only. Python loads `liburingwrap.so` through `ctypes`. That library links [liburing](https://github.com/axboe/liburing) and uses the kernel io_uring interface. The package exposes file copy and bulk-write entry points, read/write operations on open file descriptors, and optional Python callbacks used by the native code when dynamic buffer sizing is enabled. **`UringCtx`** can also be created with **`io_uring` setup flags**, register **fixed file descriptors** and **fixed buffers** (for `READ_FIXED` / `WRITE_FIXED` with `IOSQE_FIXED_FILE`), and query the kernel for **opcode support** via the probe API (`io_uring_get_probe_ring`). The Python API does not cover all of liburing; additional logic resides in `csrc/`.
 
-**Layout:** `pyuring/` — Python package; `csrc/` — sources for `liburingwrap.so`; `Makefile` — builds that shared object; `third_party/liburing` — optional vendored liburing tree; `examples/` — benchmark scripts and `test_dynamic_buffer.py`.
+**Layout:** `pyuring/` — Python package; `csrc/` — sources for `liburingwrap.so`; `Makefile` — builds that shared object; `third_party/liburing` — optional vendored liburing tree; `examples/` — benchmark scripts and `test_dynamic_buffer.py`; `tests/` — unit tests (ring flags, registration, probe).
 
 **Needs:** Linux (docs assume kernel 5.15+), Python 3.8+, and a working toolchain plus liburing headers when you build from source.
 
@@ -62,8 +62,11 @@ Path arguments are **`str`**. Optional **`buffer_size_cb`** callbacks receive **
 
 **`class UringCtx`**
 
-- **Construction:** `UringCtx(lib_path=None, entries=64)` — loads **`lib_path`**, or resolves **`liburingwrap.so`** automatically when **`lib_path`** is **`None`**.
+- **Construction:** `UringCtx(lib_path=None, entries=64, *, setup_flags=0, sq_thread_cpu=-1, sq_thread_idle=0)` — loads **`lib_path`**, or resolves **`liburingwrap.so`** automatically when **`lib_path`** is **`None`**. The native queue is created with **`io_uring_queue_init_params`**. **`setup_flags`** are `IORING_SETUP_*` bit masks (e.g. **`IORING_SETUP_SINGLE_ISSUER`**, **`IORING_SETUP_COOP_TASKRUN`**, **`IORING_SETUP_SQPOLL`**); **`sq_thread_cpu`** / **`sq_thread_idle`** apply when using SQPOLL-style tuning (see USAGE.md).
 - **Synchronous I/O:** **`read`**, **`write`**, **`read_batch`**, **`read_offsets`** (see USAGE.md for arguments and return types).
+- **Registered I/O (fixed fd / fixed buffers):** **`register_files`** / **`unregister_files`**, **`register_buffers`** / **`unregister_buffers`**, **`read_fixed`**, **`write_fixed`** — kernel-side registration for high-QD workloads; buffers must stay pinned (see USAGE.md).
+- **Opcode probe:** **`probe_opcode_supported`**, **`probe_last_op`**, **`probe_supported_mask`** — reflect **`IORING_REGISTER_PROBE`** / `io_uring_get_probe_ring` (kernel-dependent).
+- **Constants:** package exports **`IORING_SETUP_*`** and **`IORING_OP_*`** for flags and opcode numbers (aligned with Linux UAPI).
 - **Asynchronous I/O:** **`read_async`**, **`write_async`**, **`read_async_ptr`**, **`write_async_ptr`**; completion polling via **`wait_completion`**, **`peek_completion`**; submission via **`submit`**, **`submit_and_wait`**.
 - **Resource management:** **`close()`**; supports **`with`** statement.
 
@@ -108,7 +111,10 @@ After a local build:
 
 ```bash
 make && python3 examples/test_dynamic_buffer.py
+PYTHONPATH=. python3 -m unittest discover -s tests -v
 ```
+
+The **`tests/`** package covers probe helpers, optional setup flags (skipped if the kernel rejects a flag combination), and fixed file/buffer registration with **`read_fixed`** / **`write_fixed`**.
 
 If you installed from PyPI and want to run those scripts from a checkout, run them from a directory that does **not** put the repo root on `PYTHONPATH` first—otherwise `import pyuring` can pick up the tree without a built `.so` and fail.
 

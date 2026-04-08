@@ -6,3 +6,4 @@ include Makefile
 
 recursive-include csrc *.c
 recursive-include pyuring *.py
+recursive-include tests *.py

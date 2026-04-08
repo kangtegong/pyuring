@@ -6,8 +6,38 @@ from __future__ import annotations
 
 import ctypes
 import os
-from typing import Tuple, Optional
-from ctypes import c_int, c_uint, c_longlong, c_void_p, c_char_p, CFUNCTYPE, c_uint64, POINTER, byref
+from typing import Tuple, Optional, Sequence, List, Any
+from ctypes import c_int, c_uint, c_longlong, c_void_p, c_char_p, CFUNCTYPE, c_uint64, POINTER, byref, c_size_t
+
+
+# --- io_uring_setup flags (see linux/io_uring.h) ---
+IORING_SETUP_IOPOLL = 1 << 0
+IORING_SETUP_SQPOLL = 1 << 1
+IORING_SETUP_SQ_AFF = 1 << 2
+IORING_SETUP_CQSIZE = 1 << 3
+IORING_SETUP_CLAMP = 1 << 4
+IORING_SETUP_ATTACH_WQ = 1 << 5
+IORING_SETUP_R_DISABLED = 1 << 6
+IORING_SETUP_SUBMIT_ALL = 1 << 7
+IORING_SETUP_COOP_TASKRUN = 1 << 8
+IORING_SETUP_TASKRUN_FLAG = 1 << 9
+IORING_SETUP_SQE128 = 1 << 10
+IORING_SETUP_CQE32 = 1 << 11
+IORING_SETUP_SINGLE_ISSUER = 1 << 12
+IORING_SETUP_DEFER_TASKRUN = 1 << 13
+
+# --- io_uring opcodes (enum io_uring_op) ---
+IORING_OP_NOP = 0
+IORING_OP_READV = 1
+IORING_OP_WRITEV = 2
+IORING_OP_READ_FIXED = 3
+IORING_OP_WRITE_FIXED = 4
+IORING_OP_READ = 22
+IORING_OP_WRITE = 23
+
+
+class _IOVec(ctypes.Structure):
+    _fields_ = [("iov_base", c_void_p), ("iov_len", c_size_t)]
 
 
 class UringError(RuntimeError):
@@ -52,18 +82,52 @@ def _find_library():
 class UringCtx:
     """Context manager for io_uring operations."""
 
-    def __init__(self, lib_path: str = None, entries: int = 64):
+    def __init__(
+        self,
+        lib_path: str = None,
+        entries: int = 64,
+        *,
+        setup_flags: int = 0,
+        sq_thread_cpu: int = -1,
+        sq_thread_idle: int = 0,
+    ):
         if lib_path is None:
             lib_path = _find_library()
         lib_path = os.path.abspath(lib_path) if os.path.exists(lib_path) else lib_path
 
         self._lib = ctypes.CDLL(lib_path)
+        self._buffer_keepalive: List[Any] = []
 
         self._lib.uring_create.argtypes = [c_uint]
         self._lib.uring_create.restype = c_void_p
 
+        self._lib.uring_create_ex.argtypes = [c_uint, c_uint, c_int, c_uint]
+        self._lib.uring_create_ex.restype = c_void_p
+
         self._lib.uring_destroy.argtypes = [c_void_p]
         self._lib.uring_destroy.restype = None
+
+        self._lib.uring_register_files.argtypes = [c_void_p, POINTER(c_int), c_uint]
+        self._lib.uring_register_files.restype = c_int
+        self._lib.uring_unregister_files.argtypes = [c_void_p]
+        self._lib.uring_unregister_files.restype = c_int
+
+        self._lib.uring_register_buffers.argtypes = [c_void_p, POINTER(_IOVec), c_uint]
+        self._lib.uring_register_buffers.restype = c_int
+        self._lib.uring_unregister_buffers.argtypes = [c_void_p]
+        self._lib.uring_unregister_buffers.restype = c_int
+
+        self._lib.uring_read_fixed_sync.argtypes = [c_void_p, c_uint, c_void_p, c_uint, c_longlong, c_uint]
+        self._lib.uring_read_fixed_sync.restype = c_int
+        self._lib.uring_write_fixed_sync.argtypes = [c_void_p, c_uint, c_void_p, c_uint, c_longlong, c_uint]
+        self._lib.uring_write_fixed_sync.restype = c_int
+
+        self._lib.uring_probe_opcode_supported.argtypes = [c_void_p, c_int]
+        self._lib.uring_probe_opcode_supported.restype = c_int
+        self._lib.uring_probe_supported_mask.argtypes = [c_void_p, c_void_p, c_uint]
+        self._lib.uring_probe_supported_mask.restype = c_int
+        self._lib.uring_probe_last_op.argtypes = [c_void_p]
+        self._lib.uring_probe_last_op.restype = c_int
 
         self._lib.uring_read_sync.argtypes = [c_void_p, c_int, c_void_p, c_uint, c_longlong]
         self._lib.uring_read_sync.restype = c_int
@@ -115,15 +179,104 @@ class UringCtx:
         self._lib.uring_buffer_pool_set_size.argtypes = [c_void_p, c_uint, c_uint]
         self._lib.uring_buffer_pool_set_size.restype = c_int
 
-        ctx = self._lib.uring_create(entries)
+        ctx = self._lib.uring_create_ex(
+            int(entries), int(setup_flags) & 0xFFFFFFFF, int(sq_thread_cpu), int(sq_thread_idle) & 0xFFFFFFFF
+        )
         if not ctx:
             raise UringError(
-                "uring_create failed (NULL). Is liburing installed and does the kernel support io_uring?"
+                "uring_create_ex failed (NULL). Is liburing installed and does the kernel support io_uring?"
             )
         self._ctx = ctx
 
+    def register_files(self, fds: Sequence[int]) -> None:
+        """Register file descriptors for use with IOSQE_FIXED_FILE (indexed reads/writes)."""
+        n = len(fds)
+        if n == 0:
+            raise ValueError("fds must be non-empty")
+        arr = (c_int * n)(*[int(f) for f in fds])
+        ret = self._lib.uring_register_files(self._ctx, arr, n)
+        _raise_for_neg_errno(ret, "uring_register_files")
+
+    def unregister_files(self) -> None:
+        ret = self._lib.uring_unregister_files(self._ctx)
+        _raise_for_neg_errno(ret, "uring_unregister_files")
+
+    def register_buffers(self, buffers: Sequence[Any]) -> None:
+        """
+        Register memory regions for IORING_OP_READ_FIXED / WRITE_FIXED.
+        Each element must be a writable bytes-like object with stable address (e.g. bytearray).
+        Indices 0..len-1 are buf_index values for read_fixed/write_fixed.
+        """
+        n = len(buffers)
+        if n == 0:
+            raise ValueError("buffers must be non-empty")
+        iov = (_IOVec * n)()
+        keep: List[Any] = []
+        for i, b in enumerate(buffers):
+            if isinstance(b, bytes):
+                raise TypeError("buffers must be mutable (e.g. bytearray), not bytes")
+            mv = memoryview(b)
+            if mv.readonly:
+                raise TypeError("buffer must be writable")
+            if not mv.contiguous:
+                raise ValueError("buffer must be contiguous")
+            arr = (ctypes.c_char * mv.nbytes).from_buffer(b)
+            keep.append(arr)
+            iov[i].iov_base = ctypes.cast(arr, c_void_p)
+            iov[i].iov_len = c_size_t(mv.nbytes)
+        ret = self._lib.uring_register_buffers(self._ctx, iov, n)
+        _raise_for_neg_errno(ret, "uring_register_buffers")
+        self._buffer_keepalive = keep
+
+    def unregister_buffers(self) -> None:
+        ret = self._lib.uring_unregister_buffers(self._ctx)
+        _raise_for_neg_errno(ret, "uring_unregister_buffers")
+        self._buffer_keepalive.clear()
+
+    def read_fixed(self, file_index: int, buf: bytearray, offset: int, buf_index: int) -> int:
+        """Read using registered file index and registered buffer index (READ_FIXED + IOSQE_FIXED_FILE)."""
+        arr = (ctypes.c_char * len(buf)).from_buffer(buf)
+        ret = self._lib.uring_read_fixed_sync(
+            self._ctx, int(file_index), ctypes.cast(arr, c_void_p), len(buf), int(offset), int(buf_index)
+        )
+        _raise_for_neg_errno(ret, "uring_read_fixed_sync")
+        return int(ret)
+
+    def write_fixed(self, file_index: int, data: bytearray, offset: int, buf_index: int) -> int:
+        """Write using registered file index; data must be the same memory as registered buffer buf_index."""
+        arr = (ctypes.c_char * len(data)).from_buffer(data)
+        ret = self._lib.uring_write_fixed_sync(
+            self._ctx, int(file_index), ctypes.cast(arr, c_void_p), len(data), int(offset), int(buf_index)
+        )
+        _raise_for_neg_errno(ret, "uring_write_fixed_sync")
+        return int(ret)
+
+    def probe_opcode_supported(self, opcode: int) -> bool:
+        """Return True if the kernel reports this opcode as supported (IORING_REGISTER_PROBE)."""
+        ret = self._lib.uring_probe_opcode_supported(self._ctx, int(opcode))
+        if ret < 0:
+            _raise_for_neg_errno(ret, "uring_probe_opcode_supported")
+        return bool(ret)
+
+    def probe_last_op(self) -> int:
+        """Highest opcode probe slot (see io_uring_probe.last_op)."""
+        ret = self._lib.uring_probe_last_op(self._ctx)
+        _raise_for_neg_errno(ret, "uring_probe_last_op")
+        return int(ret)
+
+    def probe_supported_mask(self) -> bytes:
+        """Byte string where probe_supported_mask[i] is 1 iff opcode i is supported."""
+        lo = self.probe_last_op()
+        n = lo + 1
+        buf = (ctypes.c_ubyte * n)()
+        ret = self._lib.uring_probe_supported_mask(self._ctx, ctypes.cast(buf, c_void_p), n)
+        if ret < 0:
+            _raise_for_neg_errno(ret, "uring_probe_supported_mask")
+        return bytes(buf)
+
     def close(self) -> None:
         """Close the io_uring context."""
+        self._buffer_keepalive.clear()
         if getattr(self, "_ctx", None):
             self._lib.uring_destroy(self._ctx)
             self._ctx = None

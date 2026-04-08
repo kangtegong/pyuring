@@ -9,6 +9,7 @@
 #include <string.h>
 #include <sys/stat.h>
 #include <sys/types.h>
+#include <sys/uio.h>
 #include <unistd.h>
 
 typedef struct uring_ctx {
@@ -16,17 +17,31 @@ typedef struct uring_ctx {
   unsigned entries;
 } uring_ctx;
 
+uring_ctx *uring_create_ex(unsigned entries, unsigned flags, int sq_thread_cpu, unsigned sq_thread_idle);
+
 // Returns NULL on error (errno set).
-uring_ctx *uring_create(unsigned entries) {
+uring_ctx *uring_create(unsigned entries) { return uring_create_ex(entries, 0, -1, 0); }
+
+// Extended queue init: flags are IORING_SETUP_*; sq_thread_cpu < 0 leaves sq_thread_cpu unset.
+uring_ctx *uring_create_ex(unsigned entries, unsigned flags, int sq_thread_cpu, unsigned sq_thread_idle) {
   uring_ctx *ctx = (uring_ctx *)calloc(1, sizeof(*ctx));
   if (!ctx) {
     return NULL;
   }
   ctx->entries = entries;
 
-  int ret = io_uring_queue_init((unsigned)entries, &ctx->ring, 0);
+  struct io_uring_params p;
+  memset(&p, 0, sizeof(p));
+  p.flags = flags;
+  if (sq_thread_cpu >= 0) {
+    p.sq_thread_cpu = (unsigned int)sq_thread_cpu;
+  }
+  if (sq_thread_idle > 0 || (flags & IORING_SETUP_SQPOLL)) {
+    p.sq_thread_idle = sq_thread_idle;
+  }
+
+  int ret = io_uring_queue_init_params((unsigned)entries, &ctx->ring, &p);
   if (ret < 0) {
-    // liburing returns negative errno codes.
     errno = -ret;
     free(ctx);
     return NULL;
@@ -40,6 +55,142 @@ void uring_destroy(uring_ctx *ctx) {
   }
   io_uring_queue_exit(&ctx->ring);
   free(ctx);
+}
+
+int uring_register_files(uring_ctx *ctx, const int *fds, unsigned nr) {
+  if (!ctx || (!fds && nr > 0)) {
+    return -EINVAL;
+  }
+  return io_uring_register_files(&ctx->ring, fds, nr);
+}
+
+int uring_unregister_files(uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  return io_uring_unregister_files(&ctx->ring);
+}
+
+int uring_register_buffers(uring_ctx *ctx, const struct iovec *iovecs, unsigned nr) {
+  if (!ctx || (!iovecs && nr > 0)) {
+    return -EINVAL;
+  }
+  return io_uring_register_buffers(&ctx->ring, iovecs, nr);
+}
+
+int uring_unregister_buffers(uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  return io_uring_unregister_buffers(&ctx->ring);
+}
+
+// Fixed file index + fixed buffer index (see io_uring_prep_read_fixed + IOSQE_FIXED_FILE).
+int uring_read_fixed_sync(uring_ctx *ctx, unsigned file_index, void *buf, unsigned len, long long offset,
+                          unsigned buf_index) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_read_fixed(sqe, (int)file_index, buf, len, (off_t)offset, (int)buf_index);
+  sqe->flags |= IOSQE_FIXED_FILE;
+  sqe->user_data = 3;
+
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+
+  struct io_uring_cqe *cqe = NULL;
+  ret = io_uring_wait_cqe(&ctx->ring, &cqe);
+  if (ret < 0) {
+    return ret;
+  }
+  int res = cqe->res;
+  io_uring_cqe_seen(&ctx->ring, cqe);
+  return res;
+}
+
+int uring_write_fixed_sync(uring_ctx *ctx, unsigned file_index, const void *buf, unsigned len, long long offset,
+                           unsigned buf_index) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_write_fixed(sqe, (int)file_index, buf, len, (off_t)offset, (int)buf_index);
+  sqe->flags |= IOSQE_FIXED_FILE;
+  sqe->user_data = 4;
+
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+
+  struct io_uring_cqe *cqe = NULL;
+  ret = io_uring_wait_cqe(&ctx->ring, &cqe);
+  if (ret < 0) {
+    return ret;
+  }
+  int res = cqe->res;
+  io_uring_cqe_seen(&ctx->ring, cqe);
+  return res;
+}
+
+// Returns 1 if supported, 0 if not, negative errno on failure.
+int uring_probe_opcode_supported(uring_ctx *ctx, int opcode) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_probe *probe = io_uring_get_probe_ring(&ctx->ring);
+  if (!probe) {
+    int e = errno;
+    return e ? -e : -ENOMEM;
+  }
+  int ok = io_uring_opcode_supported(probe, opcode);
+  io_uring_free_probe(probe);
+  return ok ? 1 : 0;
+}
+
+// Writes (last_op+1) bytes: 1 if opcode index supported else 0. Returns count written (last_op+1) or negative errno.
+int uring_probe_supported_mask(uring_ctx *ctx, unsigned char *out, unsigned out_cap) {
+  if (!ctx || !out) {
+    return -EINVAL;
+  }
+  struct io_uring_probe *probe = io_uring_get_probe_ring(&ctx->ring);
+  if (!probe) {
+    int e = errno;
+    return e ? -e : -ENOMEM;
+  }
+  unsigned n = (unsigned)probe->last_op + 1u;
+  if (out_cap < n) {
+    io_uring_free_probe(probe);
+    return -EINVAL;
+  }
+  for (unsigned i = 0; i < n; i++) {
+    out[i] = io_uring_opcode_supported(probe, (int)i) ? 1 : 0;
+  }
+  io_uring_free_probe(probe);
+  return (int)n;
+}
+
+int uring_probe_last_op(uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_probe *probe = io_uring_get_probe_ring(&ctx->ring);
+  if (!probe) {
+    int e = errno;
+    return e ? -e : -ENOMEM;
+  }
+  int lo = (int)probe->last_op;
+  io_uring_free_probe(probe);
+  return lo;
 }
 
 // Synchronous helper: prepare->submit->wait for completion.

@@ -70,14 +70,30 @@ Path arguments are `str`; they are encoded for the native layer.
 
 ## `UringCtx`
 
-Context manager wrapping one **`io_uring`** instance from the native library.
+Context manager wrapping one **`io_uring`** instance from the native library. The native side uses **`io_uring_queue_init_params`** (not only the zero-flags **`io_uring_queue_init`** path).
 
 ### Constructor
 
 | Parameter | Default | Meaning |
 |-----------|---------|---------|
 | **`lib_path`** | `None` | If `None`, resolves **`liburingwrap.so`** (package `lib/`, then repo `build/`, then system). |
-| **`entries`** | `64` | Submission queue size hint for **`uring_create`**. |
+| **`entries`** | `64` | Submission queue size hint. |
+| **`setup_flags`** | `0` | Bit mask of **`IORING_SETUP_*`** flags (see **Exported constants** below). Passed to **`io_uring_params.flags`**. |
+| **`sq_thread_cpu`** | `-1` | If `>= 0`, passed as **`sq_thread_cpu`** when relevant (e.g. with **`IORING_SETUP_SQPOLL`** / **`IORING_SETUP_SQ_AFF`**). |
+| **`sq_thread_idle`** | `0` | Milliseconds for SQPOLL idle behaviour when applicable; non-zero or SQPOLL may set **`sq_thread_idle`**. |
+
+Some flag combinations require a recent kernel or extra privileges (e.g. **`IORING_SETUP_SQPOLL`**). Unsupported combinations fail at construction with **`UringError`**.
+
+### Exported constants (package level)
+
+Opcode and setup values match the Linux UAPI (`linux/io_uring.h`). Useful with **`probe_opcode_supported`** and **`UringCtx(..., setup_flags=...)`**.
+
+| Names (examples) | Role |
+|--------------------|------|
+| **`IORING_SETUP_IOPOLL`**, **`IORING_SETUP_SQPOLL`**, **`IORING_SETUP_SQ_AFF`**, **`IORING_SETUP_COOP_TASKRUN`**, **`IORING_SETUP_SINGLE_ISSUER`**, **`IORING_SETUP_DEFER_TASKRUN`**, … | Ring creation flags. |
+| **`IORING_OP_NOP`**, **`IORING_OP_READ`**, **`IORING_OP_WRITE`**, **`IORING_OP_READ_FIXED`**, **`IORING_OP_WRITE_FIXED`**, **`IORING_OP_READV`**, **`IORING_OP_WRITEV`**, … | Opcode numbers for probing. |
+
+The full set is defined in **`pyuring._native`** and re-exported from **`pyuring`**.
 
 ### Synchronous methods
 
@@ -87,6 +103,27 @@ Context manager wrapping one **`io_uring`** instance from the native library.
 | **`write`** | `fd`, `data` (bytes-like), `offset=0` | `int` | Bytes written count. |
 | **`read_batch`** | `fd`, `block_size`, `blocks`, `offset=0` | `bytes` | Contiguous read of **`blocks`** × **`block_size`** bytes. |
 | **`read_offsets`** | `fd`, `block_size`, `offsets`, `offset_bytes=True` | `bytes` | One block per entry in **`offsets`**; offsets are byte offsets if **`offset_bytes`**, else block indices. |
+
+### Registered files and buffers (kernel registration)
+
+These map to **`io_uring_register_files`**, **`io_uring_register_buffers`**, and fixed **`READ_FIXED`** / **`WRITE_FIXED`** submissions with **`IOSQE_FIXED_FILE`**. Intended for workloads that reuse the same FDs and memory regions at high queue depth.
+
+| Method | Arguments | Returns | Meaning |
+|--------|-----------|---------|---------|
+| **`register_files`** | `fds` — non-empty sequence of `int` | — | Registers open file descriptors; use index **`0 .. len(fds)-1`** as the file slot in **`read_fixed`** / **`write_fixed`**. |
+| **`unregister_files`** | — | — | **`io_uring_unregister_files`**. |
+| **`register_buffers`** | `buffers` — non-empty sequence of **writable** contiguous buffers (e.g. **`bytearray`**) | — | Each element becomes a registered buffer index **`0 .. n-1`**. **`bytes`** is rejected (must be mutable). The implementation pins memory via **`ctypes`**; keep those objects alive while registered (the context holds internal references). |
+| **`unregister_buffers`** | — | — | **`io_uring_unregister_buffers`**; clears pinned references. |
+| **`read_fixed`** | `file_index`, `buf` (**`bytearray`**), `offset`, `buf_index` | `int` | Bytes read into **`buf`** using registered file **`file_index`** and registered buffer **`buf_index`**. |
+| **`write_fixed`** | `file_index`, `data` (**`bytearray`**), `offset`, `buf_index` | `int` | Writes from the same memory region that was registered at **`buf_index`** (typical pattern: fill the registered buffer, then submit). |
+
+### Opcode probe
+
+| Method | Arguments | Returns | Meaning |
+|--------|-----------|---------|---------|
+| **`probe_opcode_supported`** | `opcode` (`int`) | `bool` | **`True`** if the kernel reports the opcode as supported (via **`io_uring_get_probe_ring`** / probe ops). |
+| **`probe_last_op`** | — | `int` | Highest opcode index described by the probe (**`io_uring_probe.last_op`**). |
+| **`probe_supported_mask`** | — | `bytes` | Length **`probe_last_op() + 1`**; byte **`i`** is **`1`** if opcode **`i`** is supported, else **`0`**. |
 
 ### Asynchronous methods
 

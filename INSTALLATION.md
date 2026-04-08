@@ -6,8 +6,8 @@ This guide applies to the **[pyuring](https://github.com/kangtegong/pyuring)** r
 
 | Piece | Purpose |
 |-------|---------|
-| **`pyuring` (Python)** | `ctypes` bindings, orchestrated helpers, and grouped **`pyuring.direct`** exports |
-| **`liburingwrap.so`** | Shared object produced by **`make`** from `csrc/`; links against **liburing** |
+| **`pyuring` (Python)** | `ctypes` bindings, orchestrated helpers, grouped **`pyuring.direct`** exports, **`IORING_*`** constants, **`UringCtx`** helpers for setup flags / fixed registration / probe |
+| **`liburingwrap.so`** | Shared object produced by **`make`** from `csrc/`; links against **liburing**; implements **`uring_create_ex`**, register/unregister files and buffers, fixed read/write, and probe helpers |
 | **liburing** | Either **system-installed** (`-luring`) or **vendored** under `third_party/liburing` |
 
 Installing with **`pip install .`** or **`pip install -e .`** runs **`build_ext`**, which invokes **`make`**, copies the `.so` into **`pyuring/lib/`**, and then installs the package.
@@ -103,8 +103,11 @@ API tables: **[USAGE.md](USAGE.md)**.
 ```bash
 make
 python3 examples/test_dynamic_buffer.py
+PYTHONPATH=. python3 -m unittest discover -s tests -v
 python3 examples/bench_async_vs_sync.py --num-files 10 --file-size-mb 10
 ```
+
+**Unit tests** under **`tests/`** exercise **`UringCtx`** ring setup flags, **`IORING_REGISTER_PROBE`**-backed opcode queries, and **`register_files`** / **`register_buffers`** with **`read_fixed`** / **`write_fixed`**. Some combinations (e.g. **`IORING_SETUP_SINGLE_ISSUER`** + **`IORING_SETUP_COOP_TASKRUN`**) are **skipped** if the running kernel refuses those flags—this is expected on older or restricted environments.
 
 More options: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**.
 
