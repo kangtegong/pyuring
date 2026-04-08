@@ -17,7 +17,7 @@ from pyuring._native import (
 )
 from pyuring._easy import copy, write, write_many
 
-__version__ = "0.1.1"
+__version__ = "0.1.2"
 
 
 class _DirectBindings(object):

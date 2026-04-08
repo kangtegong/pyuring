@@ -77,7 +77,7 @@ class BuildPyWithNative(build_py):
 
 setup(
     name="pyuring",
-    version="0.1.1",
+    version="0.1.2",
     description="Python bindings for io_uring with dynamic buffer size adjustment",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
