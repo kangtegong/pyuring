@@ -78,7 +78,6 @@ Full parameter tables, `UringCtx` / `BufferPool` methods, and semantics: **[USAG
 | [INSTALLATION.md](INSTALLATION.md) | Dependencies, editable install, vendored liburing, verification |
 | [USAGE.md](USAGE.md) | API specification (tables), behavior notes |
 | [examples/BENCHMARKS.md](examples/BENCHMARKS.md) | Benchmark scripts |
-| [docs/BENCHMARK_DOCKER.md](docs/BENCHMARK_DOCKER.md) | Docker + `pip install pyuring` verification, sync vs pyuring throughput, graphs |
 
 ## Verification
 
@@ -89,3 +88,39 @@ make && python3 examples/test_dynamic_buffer.py
 ```
 
 The script must exit with status **0** and print that all checks passed.
+
+If you develop from a git checkout, run tests **from a path like `…/project/examples/`** (or temporarily remove the repo root from `PYTHONPATH`) so `import pyuring` resolves to the **installed** wheel from `pip install pyuring`, not an unbuilt source tree without `liburingwrap.so`.
+
+### `pip install pyuring` on multiple distros (Docker)
+
+These runs use **`docker run --privileged`** (io_uring is often restricted otherwise), install **`liburing` dev headers** and **`pip install pyuring`**, copy only `examples/*.py` under `/proj/examples/` so imports come from site-packages, then execute `test_dynamic_buffer.py` and `bench_async_vs_sync.py` (8 files × 2 MiB, page cache, 3 repeats).
+
+| Environment | Dynamic-buffer tests | Notes |
+|-------------|----------------------|--------|
+| Ubuntu 22.04 | all passed | `pyuring` from PyPI (sdist build) |
+| Debian 12 (bookworm) | all passed | same |
+| Fedora 40 | all passed | same |
+
+### Throughput vs. ordinary Python file I/O
+
+The benchmark script [`examples/bench_async_vs_sync.py`](examples/bench_async_vs_sync.py) compares:
+
+| Path | What it does |
+|------|----------------|
+| **Baseline (“sync”)** | **Synchronous** I/O using `os.open`, `os.write`, `os.read` (and libc `read` where `O_DIRECT` is enabled) in a loop—typical **blocking** file I/O from Python. |
+| **pyuring (“async”)** | **`UringCtx`** + **`BufferPool`**: submissions and completions through **io_uring** (same workload shape: chunked read/write of the same files). |
+
+It is **not** compared to `asyncio` or `aiofiles`; it is **blocking POSIX-style I/O vs. this library’s io_uring queue**.
+
+With `--no-odirect`, the workload uses the **page cache** (not raw disk-only `O_DIRECT`). Measured **total** wall time (sync write+read vs async write+read) speedup on the Docker runs above:
+
+```mermaid
+xychart-beta
+    title "Total workload speedup (pyuring vs sync os.read/os.write)"
+    x-axis ["Ubuntu 22.04", "Debian 12", "Fedora 40"]
+    y-axis "× faster" 1.2 --> 1.32
+    bar [1.25, 1.29, 1.24]
+```
+
+Absolute throughput varies with CPU, storage, and kernel; the chart reflects one repeatable configuration. Reproduce:  
+`python3 examples/bench_async_vs_sync.py --num-files 8 --file-size-mb 2 --no-odirect --repeats 3`.
