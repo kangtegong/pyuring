@@ -675,26 +675,33 @@ static inline uint32_t ud_slot(uint64_t ud) { return (uint32_t)(ud & 0xffffffffu
 typedef unsigned (*buffer_size_callback_t)(uint64_t current_offset, uint64_t total_bytes, 
                                            unsigned default_block_size, void *user_data);
 
+/* Optional progress / cooperative cancel: return 0 to continue, non-zero to abort with -ECANCELED. */
+typedef int (*pipeline_progress_callback_t)(uint64_t done_bytes, uint64_t total_bytes, void *user_data);
+
 // Forward declaration
 long long uring_write_newfile_dynamic(const char *dst_path, unsigned total_mb, unsigned block_size, unsigned qd,
                                      int do_fsync, int dsync_each_write,
-                                     buffer_size_callback_t buffer_size_cb, void *user_data);
+                                     buffer_size_callback_t buffer_size_cb, void *user_data,
+                                     pipeline_progress_callback_t progress_cb, void *progress_user_data);
 long long uring_copy_path_dynamic(const char *src_path, const char *dst_path, unsigned qd, unsigned block_size,
-                                 buffer_size_callback_t buffer_size_cb, void *user_data, int do_fsync);
+                                 buffer_size_callback_t buffer_size_cb, void *user_data, int do_fsync,
+                                 pipeline_progress_callback_t progress_cb, void *progress_user_data);
 
 // Copy file using io_uring pipelined read->write.
 // Returns bytes copied, or negative errno.
 long long uring_copy_path(const char *src_path, const char *dst_path, unsigned qd, unsigned block_size) {
-  return uring_copy_path_dynamic(src_path, dst_path, qd, block_size, NULL, NULL, 0);
+  return uring_copy_path_dynamic(src_path, dst_path, qd, block_size, NULL, NULL, 0, NULL, NULL);
 }
 
 // Copy file using io_uring pipelined read->write with dynamically adjustable buffer sizes.
 // buffer_size_cb: callback to determine buffer size for each read/write (NULL = use block_size)
 // user_data: passed to callback
 // do_fsync: if non-zero, fsync destination file at the end
-// Returns bytes copied, or negative errno.
+// progress_cb: optional; invoked after each completed dst write (done_bytes, total_bytes).
+// Returns bytes copied, or negative errno (-ECANCELED if progress_cb requests cancel).
 long long uring_copy_path_dynamic(const char *src_path, const char *dst_path, unsigned qd, unsigned block_size,
-                                 buffer_size_callback_t buffer_size_cb, void *user_data, int do_fsync) {
+                                 buffer_size_callback_t buffer_size_cb, void *user_data, int do_fsync,
+                                 pipeline_progress_callback_t progress_cb, void *progress_user_data) {
   if (!src_path || !dst_path || qd == 0 || block_size == 0) {
     return -EINVAL;
   }
@@ -859,6 +866,12 @@ long long uring_copy_path_dynamic(const char *src_path, const char *dst_path, un
     } else {
       // write completion
       copied += res;
+      if (progress_cb) {
+        if (progress_cb((uint64_t)copied, file_size, progress_user_data) != 0) {
+          ret = -ECANCELED;
+          goto out;
+        }
+      }
 
       // schedule next read for this slot if remaining
       if (next_off < file_size) {
@@ -928,16 +941,19 @@ out:
 // Returns bytes written, or negative errno.
 long long uring_write_newfile(const char *dst_path, unsigned total_mb, unsigned block_size, unsigned qd,
                               int do_fsync, int dsync_each_write) {
-  return uring_write_newfile_dynamic(dst_path, total_mb, block_size, qd, do_fsync, dsync_each_write, NULL, NULL);
+  return uring_write_newfile_dynamic(dst_path, total_mb, block_size, qd, do_fsync, dsync_each_write, NULL, NULL, NULL,
+                                     NULL);
 }
 
 // Write a brand-new file with dynamically adjustable buffer sizes.
 // buffer_size_cb: callback to determine buffer size for each write (NULL = use block_size)
-// user_data: passed to callback
-// Returns bytes written, or negative errno.
+// user_data: passed to buffer_size_cb
+// progress_cb: optional; after each completed write (cumulative written, total_bytes).
+// Returns bytes written, or negative errno (-ECANCELED if progress_cb requests cancel).
 long long uring_write_newfile_dynamic(const char *dst_path, unsigned total_mb, unsigned block_size, unsigned qd,
                                       int do_fsync, int dsync_each_write,
-                                      buffer_size_callback_t buffer_size_cb, void *user_data) {
+                                      buffer_size_callback_t buffer_size_cb, void *user_data,
+                                      pipeline_progress_callback_t progress_cb, void *progress_user_data) {
   if (!dst_path || total_mb == 0 || block_size == 0 || qd == 0) {
     return -EINVAL;
   }
@@ -1090,6 +1106,14 @@ long long uring_write_newfile_dynamic(const char *dst_path, unsigned total_mb, u
           goto out;
         }
         written += res;
+        if (progress_cb) {
+          if (progress_cb((uint64_t)written, total_bytes, progress_user_data) != 0) {
+            io_uring_cq_advance(&ring, got);
+            inflight -= got;
+            ret = -ECANCELED;
+            goto out;
+          }
+        }
       }
 
       io_uring_cq_advance(&ring, got);

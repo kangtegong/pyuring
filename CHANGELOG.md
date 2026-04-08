@@ -7,6 +7,9 @@
 - `io_uring` queue setup flags, fixed file/buffer registration, and opcode probe helpers on `UringCtx`, with tests.
 - Broader io_uring surface in the native wrapper; tests reorganized.
 - `scripts/docker-test-matrix.sh` for running the unittest suite across several Linux base images (Docker; requires relaxed seccomp for io_uring).
+- High-level `copy` / `write` / `write_many`: optional **`sync_policy`** (fsync / `RWF_DSYNC` presets) and **`progress_cb(done, total) -> bool`** for cooperative cancel (`ECANCELED`) and throttling; C pipelines invoke progress after each completed write.
+- **`copy_path_dynamic`** / **`write_newfile_dynamic`**: optional **`progress_cb`** (same semantics).
+- **`pyuring.capabilities`**: process-cached **`get_probe_info`**, **`opcode_supported`**, **`require_opcode_supported`**, plus doc URL constants; richer **`UringCtx`** constructor error detail when queue init fails.
 
 ### Changed
 

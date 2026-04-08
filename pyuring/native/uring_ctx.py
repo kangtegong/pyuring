@@ -302,9 +302,15 @@ class UringCtx:
             err = ctypes.get_errno()
             if err == 0:
                 err = errno.EOPNOTSUPP
+            from pyuring.capabilities import IO_URING_KERNEL_DOC, LIBURING_PROJECT
+
             detail = (
                 "io_uring_queue_init_params failed (NULL return). "
-                "Check that liburing is usable and the kernel supports io_uring for these flags."
+                "Common causes: io_uring disabled (seccomp, container policy), "
+                "unsupported IORING_SETUP_* combination for this kernel, or resource limits.\n"
+                f"Documentation: {IO_URING_KERNEL_DOC}\n"
+                f"liburing: {LIBURING_PROJECT}\n"
+                f"setup_flags={int(setup_flags) & 0xFFFFFFFF!r} (see IORING_SETUP_* in pyuring)."
             )
             raise UringError(err, "uring_create_ex", detail=detail)
         self._ctx = ctx

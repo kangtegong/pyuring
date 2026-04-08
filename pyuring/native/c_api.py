@@ -2,7 +2,7 @@
 from __future__ import annotations
 
 import ctypes
-from ctypes import CFUNCTYPE, c_char_p, c_int, c_longlong, c_uint, c_void_p
+from ctypes import CFUNCTYPE, c_char_p, c_int, c_longlong, c_uint, c_void_p, cast
 
 from .errors import _raise_for_neg_errno
 from .library import _get_lib
@@ -25,6 +25,9 @@ def copy_path(src_path: str, dst_path: str, *, qd: int = 32, block_size: int = 1
 # Callback type for dynamic buffer size adjustment
 BufferSizeCallback = CFUNCTYPE(c_uint, ctypes.c_uint64, ctypes.c_uint64, c_uint, c_void_p)
 
+# Return 0 to continue, non-zero to abort with -ECANCELED from the C pipeline.
+ProgressCallback = CFUNCTYPE(c_int, ctypes.c_uint64, ctypes.c_uint64, c_void_p)
+
 
 def copy_path_dynamic(
     src_path: str,
@@ -34,6 +37,7 @@ def copy_path_dynamic(
     block_size: int = 1 << 20,
     buffer_size_cb: callable = None,
     fsync: bool = False,
+    progress_cb: callable = None,
 ) -> int:
     """
     Copy file using io_uring pipeline with dynamically adjustable buffer sizes.
@@ -47,6 +51,10 @@ def copy_path_dynamic(
                        This function is called before each read/write to determine the buffer size.
                        Must return a positive integer <= max_buffer_size (will be clamped).
         fsync: Whether to fsync destination file at the end
+        progress_cb: Optional ``(done_bytes: int, total_bytes: int) -> bool``.
+            Called from the worker thread after each completed destination write;
+            return True to stop early (raises ``UringError`` with ``errno.ECANCELED``).
+            May be used for progress reporting or throttling (e.g. ``time.sleep``).
 
     Returns:
         Bytes copied.
@@ -79,9 +87,20 @@ def copy_path_dynamic(
 
         callback_func = BufferSizeCallback(_callback_wrapper)
 
+    progress_func = None
+    if progress_cb is not None:
+        def _progress_wrapper(done_bytes, total_bytes, user_data):
+            try:
+                return 1 if progress_cb(int(done_bytes), int(total_bytes)) else 0
+            except Exception:
+                return 1
+
+        progress_func = ProgressCallback(_progress_wrapper)
+
     lib.uring_copy_path_dynamic.argtypes = [
         c_char_p, c_char_p, c_uint, c_uint,
-        BufferSizeCallback, c_void_p, c_int
+        BufferSizeCallback, c_void_p, c_int,
+        ProgressCallback, c_void_p,
     ]
     lib.uring_copy_path_dynamic.restype = c_longlong
 
@@ -90,9 +109,11 @@ def copy_path_dynamic(
         dst_path.encode(),
         int(qd),
         int(block_size),
-        callback_func,
+        callback_func if callback_func is not None else cast(0, BufferSizeCallback),
         None,  # user_data
         int(bool(fsync)),
+        progress_func if progress_func is not None else cast(0, ProgressCallback),
+        None,
     )
     _raise_for_neg_errno(int(ret) if ret < 0 else 0, "uring_copy_path_dynamic")
     return int(ret)
@@ -131,6 +152,7 @@ def write_newfile_dynamic(
     fsync: bool = False,
     dsync: bool = False,
     buffer_size_cb: callable = None,
+    progress_cb: callable = None,
 ) -> int:
     """
     Write a brand-new file with dynamically adjustable buffer sizes using io_uring in C.
@@ -145,6 +167,8 @@ def write_newfile_dynamic(
         buffer_size_cb: Optional callback function(current_offset, total_bytes, default_block_size) -> buffer_size
                        This function is called before each write to determine the buffer size.
                        Must return a positive integer <= max_buffer_size (will be clamped).
+        progress_cb: Optional ``(done_bytes: int, total_bytes: int) -> bool``; same semantics as for
+            :func:`copy_path_dynamic`.
 
     Returns:
         Bytes written.
@@ -177,9 +201,20 @@ def write_newfile_dynamic(
 
         callback_func = BufferSizeCallback(_callback_wrapper)
 
+    progress_func = None
+    if progress_cb is not None:
+        def _progress_wrapper(done_bytes, total_bytes, user_data):
+            try:
+                return 1 if progress_cb(int(done_bytes), int(total_bytes)) else 0
+            except Exception:
+                return 1
+
+        progress_func = ProgressCallback(_progress_wrapper)
+
     lib.uring_write_newfile_dynamic.argtypes = [
         c_char_p, c_uint, c_uint, c_uint, c_int, c_int,
-        BufferSizeCallback, c_void_p
+        BufferSizeCallback, c_void_p,
+        ProgressCallback, c_void_p,
     ]
     lib.uring_write_newfile_dynamic.restype = c_longlong
 
@@ -190,8 +225,10 @@ def write_newfile_dynamic(
         int(qd),
         int(bool(fsync)),
         int(bool(dsync)),
-        callback_func,
+        callback_func if callback_func is not None else cast(0, BufferSizeCallback),
         None,  # user_data
+        progress_func if progress_func is not None else cast(0, ProgressCallback),
+        None,
     )
     _raise_for_neg_errno(int(ret) if ret < 0 else 0, "uring_write_newfile_dynamic")
     return int(ret)

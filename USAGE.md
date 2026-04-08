@@ -54,34 +54,49 @@ Unless noted, numeric parameters are passed through to C; invalid combinations m
 
 | Item | Specification |
 |------|-----------------|
-| **Signature** | `copy(src_path, dst_path, *, mode="auto", qd=32, block_size=1<<20, fsync=False, buffer_size_cb=None) -> int` |
+| **Signature** | `copy(..., *, sync_policy="default", progress_cb=None, ...)` — see full parameters below. |
 | **Return value** | Number of bytes copied (as reported by the native implementation). |
 | **`mode`** | `"safe"` — caps `qd` at 16 and `block_size` at 1 MiB. `"fast"` — raises `qd` to at least 64 and `block_size` to at least 1 MiB. `"auto"` — uses **`copy_path_dynamic`** with default adaptive **`buffer_size_cb`** unless **`buffer_size_cb`** is supplied. |
 | **`qd`** | Queue depth (tuned by **`mode`** before use). |
 | **`block_size`** | Default block size in bytes (tuned by **`mode`**). |
-| **`fsync`** | Passed through when the dynamic path is used (`mode="auto"`). |
-| **`buffer_size_cb`** | Optional `(offset, total_bytes, default_block_size) -> int`; used only when **`mode=="auto"`**. |
+| **`fsync`** | When **`sync_policy`** is **`"default"`**, passed through to the C pipeline (end **`fsync`** on the destination). |
+| **`sync_policy`** | **`"default"`** — use **`fsync`**. **`"none"`** — no end **`fsync`**. **`"end"`** — always end **`fsync`** (overrides **`fsync=False`**). |
+| **`buffer_size_cb`** | Optional `(offset, total_bytes, default_block_size) -> int`; **`mode="auto"`** or when **`progress_cb`** / non-default **`sync_policy`** forces the dynamic C path. |
+| **`progress_cb`** | Optional `(done_bytes, total_bytes) -> bool`. Invoked after each completed destination write; return **`True`** to stop cooperatively (**`UringError`**, **`errno.ECANCELED`**). May **`sleep`** for throttling. Not available on the minimal static path (no progress / default sync / **`mode`** other than **`auto`** without extras → uses **`copy_path`** only). |
 
 ### `write`
 
 | Item | Specification |
 |------|-----------------|
-| **Signature** | `write(dst_path, *, total_mb, mode="auto", qd=256, block_size=4096, fsync=False, dsync=False, buffer_size_cb=None) -> int` |
+| **Signature** | `write(..., *, sync_policy="default", progress_cb=None, ...)` |
 | **Return value** | Bytes written (native report). |
 | **`mode`** | `"safe"` — caps `qd` at 128 and `block_size` at 4096. `"fast"` — `qd` at least 256, `block_size` at least 64 KiB. `"auto"` — **`write_newfile_dynamic`** with default adaptive callback unless **`buffer_size_cb`** is set. |
 | **`total_mb`** | Total size to write, in mebibytes (MiB). |
-| **`fsync` / `dsync`** | Passed to the underlying native write helpers. |
-| **`buffer_size_cb`** | Same shape as for **`copy`**; only for **`mode=="auto"`**. |
+| **`fsync` / `dsync`** | When **`sync_policy`** is **`"default"`**, passed to the underlying native write helpers. |
+| **`sync_policy`** | **`"default"`** — use **`fsync`** / **`dsync`**. **`"none"`** — neither end **`fsync`** nor **`RWF_DSYNC`**. **`"end"`** — end **`fsync`** only. **`"data"`** — **`RWF_DSYNC`** per write. **`"end_and_data"`** — both. |
+| **`buffer_size_cb`** | Same shape as for **`copy`**; used when **`mode=="auto"`** or when **`progress_cb`** / non-default **`sync_policy`** selects the dynamic path. |
+| **`progress_cb`** | Same contract as **`copy`**. |
 
 ### `write_many`
 
 | Item | Specification |
 |------|-----------------|
-| **Signature** | `write_many(dir_path, *, nfiles, mb_per_file, mode="auto", qd=256, block_size=4096, fsync_end=False) -> int` |
+| **Signature** | `write_many(..., *, fsync_end=False, sync_policy="default", ...)` |
 | **Return value** | Total bytes written across files. |
 | **`mode`** | Adjusts **`qd`** and **`block_size`** like **`write`** (no separate dynamic path; always **`write_manyfiles`**). |
 | **`nfiles` / `mb_per_file`** | Count and per-file size in MiB. |
-| **`fsync_end`** | Native end-of-run fsync flag. |
+| **`fsync_end`** | When **`sync_policy`** is **`"default"`**, passed as the native end-of-run fsync flag. |
+| **`sync_policy`** | Same **`"default"`** / **`"none"`** / **`"end"`** interpretation as **`copy`** for the end-fsync behaviour. |
+
+### Kernel probe cache (opcode support)
+
+| Symbol | Role |
+|--------|------|
+| **`get_probe_info()`** | Returns **`IoUringProbeInfo`** (**`last_op`**, **`opcode_mask`**) using a short-lived **`UringCtx`**; result is cached for the process unless **`refresh=True`**. |
+| **`opcode_supported(opcode)`** | **`True`** if the cached mask reports the opcode. |
+| **`require_opcode_supported(opcode)`** | Raises **`UringError(EOPNOTSUPP, ...)`** with a detail line pointing at **`IO_URING_KERNEL_DOC`** if the opcode is missing. |
+
+Constants **`IO_URING_KERNEL_DOC`** and **`LIBURING_PROJECT`** are stable URLs for error text and docs. **`UringCtx`** construction failure (**`uring_create_ex`**) includes the same links when **`io_uring_queue_init_params`** rejects the request.
 
 ---
 
@@ -94,9 +109,9 @@ These names are importable from `pyuring` and are also attributes of **`pyuring.
 | Function | Parameters (keyword-only after paths) | Returns | Notes |
 |----------|----------------------------------------|---------|--------|
 | **`copy_path`** | `qd=32`, `block_size=1<<20` | `int` | Copy **`src_path`** → **`dst_path`** in the native pipeline. |
-| **`copy_path_dynamic`** | `qd=32`, `block_size=1<<20`, `buffer_size_cb=None`, `fsync=False` | `int` | Per-chunk size from optional callback `(current_offset, total_bytes, default_block_size) -> int`. |
+| **`copy_path_dynamic`** | `qd=32`, `block_size=1<<20`, `buffer_size_cb=None`, `fsync=False`, `progress_cb=None` | `int` | Per-chunk size from optional callback `(current_offset, total_bytes, default_block_size) -> int`. Optional **`progress_cb`**: `(done_bytes, total_bytes) -> bool` (return **`True`** to cancel with **`ECANCELED`**). |
 | **`write_newfile`** | `total_mb`, `block_size=4096`, `qd=256`, `fsync=False`, `dsync=False` | `int` | Create **`dst_path`** and fill with sequential writes in C. |
-| **`write_newfile_dynamic`** | Same as **`write_newfile`** plus `buffer_size_cb=None` | `int` | Dynamic per-write size via callback (same callback shape as **`copy_path_dynamic`**). |
+| **`write_newfile_dynamic`** | Same as **`write_newfile`** plus `buffer_size_cb=None`, `progress_cb=None` | `int` | Dynamic per-write size via callback (same callback shape as **`copy_path_dynamic`**). Optional **`progress_cb`** as for **`copy_path_dynamic`**. |
 | **`write_manyfiles`** | `nfiles`, `mb_per_file`, `block_size=4096`, `qd=256`, `fsync_end=False` | `int` | Writes **`nfiles`** under **`dir_path`**. |
 
 Path arguments are `str`; they are encoded for the native layer.

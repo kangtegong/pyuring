@@ -20,8 +20,23 @@ from pyuring._native import (
     write_newfile,
     write_newfile_dynamic,
 )
-from pyuring._easy import copy, write, write_many
+from pyuring._easy import (
+    CopySyncPolicy,
+    ProgressFn,
+    WriteSyncPolicy,
+    copy,
+    write,
+    write_many,
+)
 from pyuring.aio import UringAsync, wait_completion_in_executor
+from pyuring.capabilities import (
+    IO_URING_KERNEL_DOC,
+    LIBURING_PROJECT,
+    IoUringProbeInfo,
+    get_probe_info,
+    opcode_supported,
+    require_opcode_supported,
+)
 
 import pyuring._native as _native
 
@@ -55,6 +70,9 @@ __all__ = (
         "copy",
         "write",
         "write_many",
+        "CopySyncPolicy",
+        "WriteSyncPolicy",
+        "ProgressFn",
         "direct",
         "raw",
         "UAPI_CONSTANT_NAMES",
@@ -72,6 +90,12 @@ __all__ = (
         "write_manyfiles",
         "UringAsync",
         "wait_completion_in_executor",
+        "IO_URING_KERNEL_DOC",
+        "LIBURING_PROJECT",
+        "IoUringProbeInfo",
+        "get_probe_info",
+        "opcode_supported",
+        "require_opcode_supported",
     ]
     + list(UAPI_CONSTANT_NAMES)
 )
