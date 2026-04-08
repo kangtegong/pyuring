@@ -1,5 +1,6 @@
 # Build artifacts
 build/
+wheelhouse/
 *.so
 *.a
 *.o

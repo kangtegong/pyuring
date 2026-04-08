@@ -12,6 +12,28 @@ This guide applies to the **[pyuring](https://github.com/kangtegong/pyuring)** r
 
 Installing with **`pip install .`** or **`pip install -e .`** runs **`build_ext`**, which invokes **`make`**, copies the `.so` into **`pyuring/lib/`**, and then installs the package.
 
+## Binary wheels (manylinux) and linking
+
+Official **manylinux** wheels (built in CI with **[cibuildwheel](https://github.com/pypa/cibuildwheel)**) clone **[liburing](https://github.com/axboe/liburing)** into **`third_party/liburing`**, build **`liburing.a`**, and link the wrapper as **`liburingwrap.so`** against that archive. **`ldd`** on that **`liburingwrap.so`** shows only **`libc`** (and the dynamic loader), not **`liburing.so`** — so end users **do not** install a separate liburing package for those wheels.
+
+| Build / install path | liburing usage | Needs **`liburing.so`** at runtime? |
+|----------------------|----------------|-------------------------------------|
+| **manylinux wheel** from CI | static archive → linked into **`liburingwrap.so`** | **No** |
+| **sdist** or **editable** build **without** vendored headers | **`Makefile`** uses **`-luring`** (system) | **Yes** (distro **`liburing`** / SONAME on the loader path) |
+| **sdist** or **editable** build **with** vendored **`third_party/liburing`** (headers + **`liburing.a`**) | same as wheels | **No** |
+
+### Wheel platform tags (reference)
+
+Repair is done by **auditwheel** inside cibuildwheel; exact **`manylinux_*`** glibc tags depend on the tool version and base image.
+
+| Artifact | Typical arch | Default CI (`ubuntu-latest`) |
+|----------|--------------|------------------------------|
+| **`manylinux_*_x86_64`** | 64-bit x86 | Build locally with **`cibuildwheel .`** (Docker required); CI is optional. |
+| **`manylinux_*_aarch64`** | 64-bit ARM | **No** unless you set e.g. **`CIBW_ARCHS_LINUX=aarch64`** (QEMU) or use an aarch64 runner. |
+| **`musllinux_*`** | musl-based Linux | **Not** built by default (Alpine liburing build path is still optional); install from **sdist** or use glibc wheels. |
+
+To build wheels locally (Docker required): **`pip install cibuildwheel`** then **`cibuildwheel .`** from the repo root; wheels appear under **`wheelhouse/`**. **`pyproject.toml`** pins **manylinux_2_28** images (not manylinux2014): current liburing needs newer kernel UAPI headers than CentOS 7-era manylinux2014 provides.
+
 ## Requirements
 
 | Requirement | Notes |
@@ -27,7 +49,7 @@ Installing with **`pip install .`** or **`pip install -e .`** runs **`build_ext`
 pip install pyuring
 ```
 
-You still need **liburing** on the build machine when installing from sdist/source; wheels (if published for your platform) bundle the `.so` inside the package.
+For **sdist** or **source** installs you need a toolchain and **liburing** (system headers or a vendored **`third_party/liburing`** tree) on the **build** machine. **Prebuilt manylinux wheels** bundle **`liburingwrap.so`** built with vendored static liburing — no separate liburing package is required at install time on supported glibc **x86_64** Linux.
 
 ## Editable install from a clone
 
@@ -127,11 +149,12 @@ export TWINE_PASSWORD='pypi-…'   # your API token; do not commit this
 
 Optional: `./scripts/publish-pypi.sh --verbose`
 
-**Manual equivalent (sdist only — required for PyPI):** PyPI **rejects** wheels tagged `linux_x86_64` (not `manylinux_*`). Upload the **`.tar.gz`** so users build from source; use **auditwheel** / **cibuildwheel** if you later publish Linux wheels.
+**Manual equivalent:** PyPI **rejects** wheels tagged `linux_x86_64` (not `manylinux_*` / `musllinux_*`). Build audited wheels with **cibuildwheel** (see **Binary wheels** above), copy **`wheelhouse/*.whl`** into **`dist/`**, then run **`./scripts/publish-pypi.sh`**, which uploads the sdist and any **`manylinux`/`musllinux`** wheels.
 
 ```bash
 rm -rf dist && python3 -m build
-python3 -m twine check dist/pyuring-*.whl dist/pyuring-*.tar.gz
+# Optional: add cibuildwheel-produced wheels to dist/ before upload
+python3 -m twine check dist/pyuring-*.tar.gz  # add dist/*.whl when present
 python3 -m twine upload dist/pyuring-*.tar.gz
 ```
 

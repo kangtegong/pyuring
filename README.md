@@ -14,6 +14,8 @@ Linux only. Python loads `liburingwrap.so` through `ctypes`. That library links 
 pip install pyuring
 ```
 
+On **glibc x86_64** Linux, PyPI may serve a **manylinux** wheel that bundles **`liburingwrap.so`** without a separate system liburing package; other platforms often install from **sdist** and compile against liburing (see [INSTALLATION.md](INSTALLATION.md)).
+
 From git (submodule for liburing if you use it):
 
 ```bash

@@ -1,3 +1,17 @@
 [build-system]
 requires = ["setuptools>=68", "wheel"]
 build-backend = "setuptools.build_meta"
+
+[tool.cibuildwheel]
+build-frontend = "build"
+# manylinux glibc only; musllinux needs a validated liburing build on Alpine (see INSTALLATION.md).
+skip = "*-musllinux*"
+test-command = "python -c \"import pyuring; assert pyuring.__version__\""
+
+[tool.cibuildwheel.linux]
+before-all = "bash {project}/scripts/cibw_before_all.sh"
+# manylinux2014 headers are too old for current liburing (e.g. __kernel_rwf_t, statx).
+manylinux-x86_64-image = "manylinux_2_28"
+manylinux-i686-image = "manylinux_2_28"
+manylinux-pypy_x86_64-image = "manylinux_2_28"
+manylinux-pypy_i686-image = "manylinux_2_28"

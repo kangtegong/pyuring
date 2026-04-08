@@ -1,0 +1,48 @@
+## 설치·배포 (가장 먼저)
+- [x] manylinux / musllinux 바이너리 휠 (cibuildwheel + auditwheel). sdist-only면 사용자마다 컴파일·헤더 의존이 남는다. *(manylinux: `pyproject.toml` `[tool.cibuildwheel]` + `scripts/cibw_before_all.sh`; musllinux는 스킵 — 추후 검증 후 활성화)*
+- [x] 휠에 포함되는 `liburingwrap.so`와 시스템 liburing 동적 링크 조합을 명확히 하고, 지원 glibc/아키텍처 표를 문서화한다. *(INSTALLATION.md `Binary wheels` 섹션 + CI에서 vendored 정적 링크)*
+
+## CI·품질 게이트
+- [ ] 메인 저장소 CI (Linux 전용): `make`, `python -m unittest`, 최소 한 개 최신 커널/배포 조합.
+- [ ] io_uring은 Docker 기본 seccomp에서 막히므로, CI에서 seccomp 완화 또는 호스트 러너 전제를 문서/워크플로에 명시.
+- [ ] (선택) `scripts/docker-test-matrix.sh`를 주기적으로 돌리거나 CI 잡으로 승격.
+
+## 예외·에러 모델 (라이브러리 소비자 경험)
+- [ ] `UringError`에 정수 `errno` 보존 (및 가능하면 `OSError`와 동일한 의미로 매핑). 문자열만으로는 `EAGAIN`/`ENOENT` 분기가 번거롭다.
+- [ ] ctypes 경로에서 실패 시 일관된 메시지 포맷(어떤 syscall/래퍼 단계인지).
+
+## 타입·API 발견성
+- [ ] PEP 561: `py.typed` 배포.
+- [ ] 공개 API(`UringCtx`, 고수준 `copy`/`write`, `BufferPool` 등)에 대한 인라인 타입 또는 `.pyi` 정리.
+- [ ] `help()`/문서에서 자주 쓰는 패턴만이라도 “권장 사용법” 요약 (예: fixed buffer 생명주기).
+
+## 비동기·이벤트 루프 (파이썬 “완벽” 경험의 핵심)
+- [ ] `asyncio` 통합: 완료 큐/uring fd를 루프에 등록하거나, executor + 명확한 취소 시맨틱 중 하나를 선택해 실험적 모듈로 제공.
+- [ ] `async def read`/`write` 스타일 래퍼는 GIL·콜백·버퍼 핀ning 규칙을 문서에 쓰고, 스레드 안전 범위를 명시.
+
+## 스레드·수명 주기 계약
+- [ ] 단일 `UringCtx`/ring 인스턴스의 스레드 안전성(안전하지 않으면 “한 스레드 전용”으로 고정) 문서 + 필요 시 런타임 검사/락 옵션 검토.
+- [ ] `close()` 이후 메서드 호출 시 명확한 예외(이미 닫힘).
+- [ ] `BufferPool`/고정 버퍼: mmap/ctypes 포인터가 유효한 동안 객체가 해제되지 않도록 하는 패턴을 API 차원에서 강제하거나 문서화.
+
+## 고수준 API (copy/write 등)
+- [ ] 진행률·스로틀링 콜백(바이트 단위, 선택).
+- [ ] 취소: 협력적 취소 플래그 또는 `asyncio.CancelledError`와 연동 시 설계.
+- [ ] 대용량/네트워크 FS에서의 `fsync`/`dsync` 정책을 모드로 노출할지 결정.
+
+## 커널·기능 탐지
+- [ ] 런타임에 `IORING_SETUP_*`/opcode 지원 여부를 요약하는 헬퍼(프로브 결과 캐시).
+- [ ] 지원하지 않는 플래그/opcode에 대한 명확한 에러와 문서 링크.
+
+## 테스트·회귀
+- [ ] pytest 전환은 선택이지만, coverage 최소 목표와 필수 테스트 목록 정하기.
+- [ ] 취소·타임아웃·부분 완료(EAGAIN 계열) 시나리오를 자동 테스트로 고정.
+
+## 문서·운영
+- [ ] 지원 커널·배포·liburing 최소 버전 매트릭스 (README 또는 별도 페이지).
+- [ ] 보안: 경로 조작·심볼릭 링크·컨테이너에서의 io_uring 가용성에 대한 짧은 주의 섹션.
+- [ ] CHANGELOG/릴리스 노트와 TODO·로드맵 연계 (완료 시 체크).
+
+## 장기 / 조사 과제
+- [ ] CPython 다른 바인딩 방식(Cython/cffi) 대비 ctypes 유지 이유와 한계 정리.
+- [ ] Zero-copy·registered buffer 풀을 일반 애플리케이션 패턴에 맞게 쓰기 쉬운 빌더 API 검토.

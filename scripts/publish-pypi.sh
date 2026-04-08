@@ -3,10 +3,14 @@
 # under dist/ (e.g. manylinux-out) break Twine with:
 #   InvalidDistribution: Unknown distribution format: 'manylinux-out'
 #
-# PyPI rejects bare "linux_x86_64" binary wheels (400 unsupported platform tag).
-# Only manylinux*/musllinux wheels are accepted for Linux binaries. This script
-# uploads the source distribution (.tar.gz) so `pip install` builds from source.
-# To publish wheels later, build with auditwheel/cibuildwheel and upload separately.
+# This script uploads:
+#   - the source distribution (.tar.gz), always; and
+#   - wheels whose names contain "manylinux" or "musllinux" (auditwheel-repaired
+#     builds from cibuildwheel). Bare "linux_x86_64" wheels are skipped with a
+#     warning — PyPI rejects them.
+#
+# Build flow: `python3 -m build` produces an sdist; copy CI wheelhouse/*.whl
+# into dist/ before running this script if you publish Linux binaries.
 #
 # Non-interactive upload (CI or token on disk):
 #   export TWINE_USERNAME=__token__
@@ -23,7 +27,7 @@ python3 -m build
 
 shopt -s nullglob
 sdists=(dist/pyuring-*.tar.gz)
-wheels=(dist/pyuring-*.whl)
+all_wheels=(dist/pyuring-*.whl)
 shopt -u nullglob
 
 if [[ ${#sdists[@]} -eq 0 ]]; then
@@ -31,8 +35,23 @@ if [[ ${#sdists[@]} -eq 0 ]]; then
   exit 1
 fi
 
-# Validate everything we built (wheel + sdist)
-python3 -m twine check dist/pyuring-*.whl dist/pyuring-*.tar.gz
+upload_wheels=()
+for w in "${all_wheels[@]}"; do
+  case "$w" in
+    *manylinux*|*musllinux*)
+      upload_wheels+=("$w")
+      ;;
+    *)
+      echo "warning: skipping wheel (not manylinux/musllinux): $w" >&2
+      ;;
+  esac
+done
 
-# PyPI: sdist only (see header comment)
-exec python3 -m twine upload "${sdists[@]}" "$@"
+check_paths=("${sdists[@]}")
+if [[ ${#upload_wheels[@]} -gt 0 ]]; then
+  check_paths+=("${upload_wheels[@]}")
+fi
+python3 -m twine check "${check_paths[@]}"
+
+upload_paths=("${sdists[@]}" "${upload_wheels[@]}")
+exec python3 -m twine upload "${upload_paths[@]}" "$@"
