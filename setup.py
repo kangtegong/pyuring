@@ -89,7 +89,7 @@ setup(
         "Source": "https://github.com/kangtegong/pyuring",
         "Documentation": "https://github.com/kangtegong/pyuring/blob/main/README.md",
     },
-    packages=["pyuring", "pyuring.lib"],
+    packages=["pyuring", "pyuring.lib", "pyuring.native"],
     package_data={
         "pyuring": ["lib/liburingwrap.so"],
     },

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from typing import Callable, Optional
 
-from pyuring._native import (
+from pyuring.native import (
     copy_path,
     copy_path_dynamic,
     write_newfile,
