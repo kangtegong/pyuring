@@ -21,6 +21,7 @@ from pyuring._native import (
     write_newfile_dynamic,
 )
 from pyuring._easy import copy, write, write_many
+from pyuring.aio import UringAsync, wait_completion_in_executor
 
 import pyuring._native as _native
 
@@ -44,6 +45,7 @@ direct.copy_path_dynamic = copy_path_dynamic
 direct.write_newfile = write_newfile
 direct.write_newfile_dynamic = write_newfile_dynamic
 direct.write_manyfiles = write_manyfiles
+direct.UringAsync = UringAsync
 
 # Backward-compatible alias
 raw = direct
@@ -68,6 +70,8 @@ __all__ = (
         "write_newfile",
         "write_newfile_dynamic",
         "write_manyfiles",
+        "UringAsync",
+        "wait_completion_in_executor",
     ]
     + list(UAPI_CONSTANT_NAMES)
 )

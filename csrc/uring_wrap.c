@@ -68,6 +68,14 @@ void uring_destroy(uring_ctx *ctx) {
   free(ctx);
 }
 
+// io_uring CQ fd — poll(2) / epoll / asyncio loop.add_reader
+int uring_ring_fd(const uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  return ctx->ring.ring_fd;
+}
+
 int uring_register_files(uring_ctx *ctx, const int *fds, unsigned nr) {
   if (!ctx || (!fds && nr > 0)) {
     return -EINVAL;

@@ -12,6 +12,8 @@ This guide applies to the **[pyuring](https://github.com/kangtegong/pyuring)** r
 
 Installing with **`pip install .`** or **`pip install -e .`** runs **`build_ext`**, which invokes **`make`**, copies the `.so` into **`pyuring/lib/`**, and then installs the package.
 
+Running **`make`** alone (without pip) also copies **`build/liburingwrap.so`** into **`pyuring/lib/`**, so a development tree on **`PYTHONPATH`** loads the freshly built library.
+
 ## Binary wheels (manylinux) and linking
 
 Official **manylinux** wheels (built in CI with **[cibuildwheel](https://github.com/pypa/cibuildwheel)**) clone **[liburing](https://github.com/axboe/liburing)** into **`third_party/liburing`**, build **`liburing.a`**, and link the wrapper as **`liburingwrap.so`** against that archive. **`ldd`** on that **`liburingwrap.so`** shows only **`libc`** (and the dynamic loader), not **`liburing.so`** — so end users **do not** install a separate liburing package for those wheels.

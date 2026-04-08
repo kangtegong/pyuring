@@ -54,6 +54,9 @@ class UringCtx:
         self._lib.uring_destroy.argtypes = [c_void_p]
         self._lib.uring_destroy.restype = None
 
+        self._lib.uring_ring_fd.argtypes = [c_void_p]
+        self._lib.uring_ring_fd.restype = c_int
+
         self._lib.uring_register_files.argtypes = [c_void_p, POINTER(c_int), c_uint]
         self._lib.uring_register_files.restype = c_int
         self._lib.uring_unregister_files.argtypes = [c_void_p]
@@ -1266,6 +1269,15 @@ class UringCtx:
 
     def __exit__(self, exc_type, exc, tb):
         self.close()
+
+    @property
+    def ring_fd(self) -> int:
+        """Kernel fd for this ring's completion side (poll/epoll, :mod:`asyncio` ``add_reader``)."""
+        if not getattr(self, "_ctx", None):
+            raise UringError(errno.EINVAL, "uring_ring_fd", detail="UringCtx is closed")
+        ret = self._lib.uring_ring_fd(self._ctx)
+        _raise_for_neg_errno(ret, "uring_ring_fd")
+        return int(ret)
 
     def read(self, fd: int, length: int, offset: int = 0) -> bytes:
         """Read data from a file descriptor using io_uring."""

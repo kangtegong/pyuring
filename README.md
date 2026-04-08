@@ -84,7 +84,8 @@ Path arguments are **`str`**. Optional **`buffer_size_cb`** callbacks receive **
 ### Other documentation
 
 - Installation and build: **[INSTALLATION.md](INSTALLATION.md)**  
-- Benchmarks: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**
+- Benchmarks: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**  
+- asyncio: **[USAGE.md](USAGE.md)** (*asyncio*); **`from pyuring.aio import UringAsync`** (also **`from pyuring import UringAsync`**)
 
 ## Quick examples
 

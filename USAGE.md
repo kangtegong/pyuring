@@ -17,6 +17,26 @@ This document describes the public Python API of the [pyuring](https://github.co
 - **Context managers:** Prefer **`with UringCtx(...) as ctx:`** and **`with BufferPool.create(...) as pool:`** so the ring and pool are torn down reliably.
 - **Branching on failure:** `except UringError as e:` then **`if e.errno == errno.EEXIST:`** (etc.), not string parsing.
 
+## asyncio (`pyuring.aio`)
+
+Import: **`from pyuring.aio import UringAsync, wait_completion_in_executor`** (also re-exported from **`pyuring`**).
+
+| Symbol | Role |
+|--------|------|
+| **`UringCtx.ring_fd`** | Kernel fd for the completion queue; **`UringAsync`** registers it with **`asyncio.loop.add_reader`**. |
+| **`UringAsync(ctx)`** | **`async def wait_completion() -> (user_data, result)`** — same contract as **`UringCtx.wait_completion`**, integrated with the running event loop. First use pins the **current** **`asyncio`** loop; using another loop later raises **`RuntimeError`**. |
+| **`wait_completion_in_executor(ctx, executor=None)`** | **`loop.run_in_executor(executor, ctx.wait_completion)`** — thread-based; cancellation does not unblock a blocked worker thread. |
+
+**Lifecycle**
+
+- Prefer **`async with UringAsync(ctx) as ua:`** or call **`ua.close()`** when done; that removes the reader and cancels pending **`wait_completion`** futures. It does **not** close **`ctx`**.
+- Do not **`close()`** the **`UringCtx`** while coroutines still **`await ua.wait_completion()`**; completions may still be delivered or errors may surface.
+
+**GIL, threads, buffers**
+
+- **`UringAsync`** and **`UringCtx`** are intended for **one thread** — the thread that runs the **`asyncio`** event loop. Do not share a **`UringCtx`** across threads.
+- **`read_async`** / **`write_async`** retain kernel references to buffer memory until the matching completion is returned; keep **`bytearray`** / **`BufferPool`** views alive until that **`await`**.
+
 ## Naming
 
 | Concept | Description |

@@ -5,6 +5,9 @@ from typing import Any, Callable, Final, Optional
 
 from pyuring.native.errors import UringError as UringError
 
+from pyuring.aio import UringAsync as UringAsync
+from pyuring.aio import wait_completion_in_executor as wait_completion_in_executor
+
 __version__: Final[str]
 
 SIGINFO_T_SIZE: Final[int]
@@ -86,6 +89,7 @@ def write_manyfiles(
 class _DirectBindings:
     UringError: type[UringError]
     UringCtx: type[Any]
+    UringAsync: type[Any]
     BufferPool: type[Any]
     copy_path: Callable[..., int]
     copy_path_dynamic: Callable[..., int]

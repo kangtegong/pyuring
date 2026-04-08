@@ -27,6 +27,8 @@ endif
 .PHONY: all clean
 
 all: $(OUT)
+	@mkdir -p pyuring/lib
+	cp -f $(OUT) pyuring/lib/$(LIB_NAME)
 
 build:
 	mkdir -p build
