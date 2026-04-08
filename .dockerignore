@@ -1,7 +1,0 @@
-.git
-build
-dist
-*.egg-info
-.pytest_cache
-__pycache__
-third_party
