@@ -1,7 +1,5 @@
 include README.md
-include CHANGELOG.md
-include INSTALLATION.md
-include USAGE.md
+recursive-include docs *.md
 include LICENSE
 include Makefile
 include scripts/cibw_before_all.sh

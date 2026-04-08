@@ -77,7 +77,7 @@ class BuildPyWithNative(build_py):
 
 setup(
     name="pyuring",
-    version="0.1.3",
+    version="0.2.0",
     description="Python bindings for io_uring with dynamic buffer size adjustment",
     long_description=open("README.md", encoding="utf-8").read(),
     long_description_content_type="text/markdown",
@@ -88,6 +88,10 @@ setup(
     project_urls={
         "Source": "https://github.com/kangtegong/pyuring",
         "Documentation": "https://github.com/kangtegong/pyuring/blob/main/README.md",
+        "API reference (USAGE)": "https://github.com/kangtegong/pyuring/blob/main/docs/USAGE.md",
+        "Install": "https://github.com/kangtegong/pyuring/blob/main/docs/INSTALLATION.md",
+        "Changelog": "https://github.com/kangtegong/pyuring/blob/main/docs/CHANGELOG.md",
+        "Testing": "https://github.com/kangtegong/pyuring/blob/main/docs/TESTING.md",
     },
     packages=["pyuring", "pyuring.lib", "pyuring.native"],
     package_data={

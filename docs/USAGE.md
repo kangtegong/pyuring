@@ -20,6 +20,8 @@ This document describes the public Python API of the [pyuring](https://github.co
 - **Context managers:** Prefer **`with UringCtx(...) as ctx:`** and **`with BufferPool.create(...) as pool:`** so the ring and pool are torn down reliably.
 - **Branching on failure:** `except UringError as e:` then **`if e.errno == errno.EEXIST:`** (etc.), not string parsing.
 
+For supported kernels and the project testing policy, see **`docs/SUPPORT.md`** and **`docs/TESTING.md`** in the repository.
+
 ## asyncio (`pyuring.aio`)
 
 Import: **`from pyuring.aio import UringAsync, wait_completion_in_executor`** (also re-exported from **`pyuring`**).

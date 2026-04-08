@@ -133,7 +133,7 @@ python3 examples/bench_async_vs_sync.py --num-files 10 --file-size-mb 10
 
 **Unit tests** under **`tests/`** exercise **`UringCtx`** ring setup flags, **`IORING_REGISTER_PROBE`**-backed opcode queries, and **`register_files`** / **`register_buffers`** with **`read_fixed`** / **`write_fixed`**. Some combinations (e.g. **`IORING_SETUP_SINGLE_ISSUER`** + **`IORING_SETUP_COOP_TASKRUN`**) are **skipped** if the running kernel refuses those flags—this is expected on older or restricted environments.
 
-More options: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**.
+More options: **[BENCHMARKS.md](BENCHMARKS.md)**.
 
 ## Publishing to PyPI
 

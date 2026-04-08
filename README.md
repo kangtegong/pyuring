@@ -4,9 +4,16 @@ Code: [github.com/kangtegong/pyuring](https://github.com/kangtegong/pyuring)
 
 Linux only. Python loads `liburingwrap.so` through `ctypes`. That library links [liburing](https://github.com/axboe/liburing) and uses the kernel io_uring interface. The package exposes file copy and bulk-write entry points, read/write operations on open file descriptors, and optional Python callbacks used by the native code when dynamic buffer sizing is enabled. **`UringCtx`** can also be created with **`io_uring` setup flags**, register **fixed file descriptors** and **fixed buffers** (for `READ_FIXED` / `WRITE_FIXED` with `IOSQE_FIXED_FILE`), and query the kernel for **opcode support** via the probe API (`io_uring_get_probe_ring`). The Python API does not cover all of liburing; additional logic resides in `csrc/`.
 
-**Layout:** `pyuring/` — Python package; `csrc/` — sources for `liburingwrap.so`; `Makefile` — builds that shared object; `third_party/liburing` — optional vendored liburing tree; `examples/` — benchmark scripts and `test_dynamic_buffer.py`; `tests/` — unit tests (ring flags, registration, probe).
+**Layout:** `pyuring/` — Python package; `csrc/` — sources for `liburingwrap.so`; `Makefile` — builds that shared object; `third_party/liburing` — optional vendored liburing tree; `docs/` — **USAGE**, install guide, changelog, testing policy, benchmarks guide; `examples/` — benchmark scripts and `test_dynamic_buffer.py`; `tests/` — unit tests (ring flags, registration, probe).
 
 **Needs:** Linux (docs assume kernel 5.15+), Python 3.8+, and a working toolchain plus liburing headers when you build from source.
+
+| More docs | |
+|-----------|--|
+| [docs/USAGE.md](docs/USAGE.md) | Full API tables and patterns |
+| [docs/INSTALLATION.md](docs/INSTALLATION.md) | Build and install |
+| [docs/SUPPORT.md](docs/SUPPORT.md) | Kernel / liburing / wheels / containers |
+| [docs/TESTING.md](docs/TESTING.md) | unittest vs pytest, coverage goals, mandatory test areas |
 
 ## Install
 
@@ -14,7 +21,7 @@ Linux only. Python loads `liburingwrap.so` through `ctypes`. That library links 
 pip install pyuring
 ```
 
-On **glibc x86_64** Linux, PyPI may serve a **manylinux** wheel that bundles **`liburingwrap.so`** without a separate system liburing package; other platforms often install from **sdist** and compile against liburing (see [INSTALLATION.md](INSTALLATION.md)).
+On **glibc x86_64** Linux, PyPI may serve a **manylinux** wheel that bundles **`liburingwrap.so`** without a separate system liburing package; other platforms often install from **sdist** and compile against liburing (see [docs/INSTALLATION.md](docs/INSTALLATION.md)).
 
 From git (submodule for liburing if you use it):
 
@@ -24,19 +31,19 @@ cd pyuring
 pip install -e .
 ```
 
-Debian/Ubuntu: `liburing-dev`. Fedora/RHEL: `liburing-devel`. Arch: `liburing`. If installation fails, see [INSTALLATION.md](INSTALLATION.md).
+Debian/Ubuntu: `liburing-dev`. Fedora/RHEL: `liburing-devel`. Arch: `liburing`. If installation fails, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
 ## API reference (overview)
 
-The package loads native code from `liburingwrap.so`. Operations that fail in the C layer raise **`UringError`** (subclass of **`OSError`**); **`errno`** matches the kernel errno, and **`operation`** names the failing wrapper. See **[USAGE.md](USAGE.md)** for message format and recommended patterns.
+The package loads native code from `liburingwrap.so`. Operations that fail in the C layer raise **`UringError`** (subclass of **`OSError`**); **`errno`** matches the kernel errno, and **`operation`** names the failing wrapper. See **[docs/USAGE.md](docs/USAGE.md)** for message format and recommended patterns.
 
 **Exports.** Public symbols are available from the package root (`from pyuring import copy, UringCtx, …`). The namespace object **`pyuring.direct`** exposes the same callables and types as attributes. **`pyuring.raw`** is a backward-compatible alias of **`pyuring.direct`**.
 
-Complete parameter lists, defaults, and per-method tables: **[USAGE.md](USAGE.md)**.
+Complete parameter lists, defaults, and per-method tables: **[docs/USAGE.md](docs/USAGE.md)**.
 
 ### Orchestrated helpers
 
-These functions select queue depth and block size from **`mode`** (`"safe"` | `"fast"` | `"auto"`) before invoking the native implementation. Keyword-only arguments not shown below are listed in USAGE.md.
+These functions select queue depth and block size from **`mode`** (`"safe"` | `"fast"` | `"auto"`) before invoking the native implementation. Keyword-only arguments not shown below are listed in docs/USAGE.md.
 
 | Name | Signature (summary) | Return value |
 |------|---------------------|--------------|
@@ -58,15 +65,15 @@ These functions map directly to the shared library. They are importable at packa
 | **`write_newfile_dynamic`** | `write_newfile_dynamic(dst_path, *, total_mb, block_size=4096, qd=256, fsync=False, dsync=False, buffer_size_cb=None)` | **`int`** |
 | **`write_manyfiles`** | `write_manyfiles(dir_path, *, nfiles, mb_per_file, block_size=4096, qd=256, fsync_end=False)` | **`int`** |
 
-Path arguments are **`str`**. Optional **`buffer_size_cb`** callbacks receive **`(current_offset, total_bytes, default_block_size)`** and return an **`int`** buffer size where documented in USAGE.md.
+Path arguments are **`str`**. Optional **`buffer_size_cb`** callbacks receive **`(current_offset, total_bytes, default_block_size)`** and return an **`int`** buffer size where documented in docs/USAGE.md.
 
 ### Classes
 
 **`class UringCtx`**
 
-- **Construction:** `UringCtx(lib_path=None, entries=64, *, setup_flags=0, sq_thread_cpu=-1, sq_thread_idle=0)` — loads **`lib_path`**, or resolves **`liburingwrap.so`** automatically when **`lib_path`** is **`None`**. The native queue is created with **`io_uring_queue_init_params`**. **`setup_flags`** are `IORING_SETUP_*` bit masks (e.g. **`IORING_SETUP_SINGLE_ISSUER`**, **`IORING_SETUP_COOP_TASKRUN`**, **`IORING_SETUP_SQPOLL`**); **`sq_thread_cpu`** / **`sq_thread_idle`** apply when using SQPOLL-style tuning (see USAGE.md).
-- **Synchronous I/O:** **`read`**, **`write`**, **`read_batch`**, **`read_offsets`** (see USAGE.md for arguments and return types).
-- **Registered I/O (fixed fd / fixed buffers):** **`register_files`** / **`unregister_files`**, **`register_buffers`** / **`unregister_buffers`**, **`read_fixed`**, **`write_fixed`** — kernel-side registration for high-QD workloads; buffers must stay pinned (see USAGE.md).
+- **Construction:** `UringCtx(lib_path=None, entries=64, *, setup_flags=0, sq_thread_cpu=-1, sq_thread_idle=0)` — loads **`lib_path`**, or resolves **`liburingwrap.so`** automatically when **`lib_path`** is **`None`**. The native queue is created with **`io_uring_queue_init_params`**. **`setup_flags`** are `IORING_SETUP_*` bit masks (e.g. **`IORING_SETUP_SINGLE_ISSUER`**, **`IORING_SETUP_COOP_TASKRUN`**, **`IORING_SETUP_SQPOLL`**); **`sq_thread_cpu`** / **`sq_thread_idle`** apply when using SQPOLL-style tuning (see docs/USAGE.md).
+- **Synchronous I/O:** **`read`**, **`write`**, **`read_batch`**, **`read_offsets`** (see docs/USAGE.md for arguments and return types).
+- **Registered I/O (fixed fd / fixed buffers):** **`register_files`** / **`unregister_files`**, **`register_buffers`** / **`unregister_buffers`**, **`read_fixed`**, **`write_fixed`** — kernel-side registration for high-QD workloads; buffers must stay pinned (see docs/USAGE.md).
 - **Opcode probe:** **`probe_opcode_supported`**, **`probe_last_op`**, **`probe_supported_mask`** — reflect **`IORING_REGISTER_PROBE`** / `io_uring_get_probe_ring` (kernel-dependent).
 - **Constants:** package exports **`IORING_SETUP_*`** and **`IORING_OP_*`** for flags and opcode numbers (aligned with Linux UAPI).
 - **Asynchronous I/O:** **`read_async`**, **`write_async`**, **`read_async_ptr`**, **`write_async_ptr`**; completion polling via **`wait_completion`**, **`peek_completion`**; submission via **`submit`**, **`submit_and_wait`**.
@@ -79,13 +86,13 @@ Path arguments are **`str`**. Optional **`buffer_size_cb`** callbacks receive **
 
 **`class UringError`**
 
-- Base: **`OSError`**. **`errno`** / **`operation`** / optional **`detail`**; see **[USAGE.md](USAGE.md)** (**Errors and messages**).
+- Base: **`OSError`**. **`errno`** / **`operation`** / optional **`detail`**; see **[docs/USAGE.md](docs/USAGE.md)** (**Errors and messages**).
 
 ### Other documentation
 
-- Installation and build: **[INSTALLATION.md](INSTALLATION.md)**  
-- Benchmarks: **[examples/BENCHMARKS.md](examples/BENCHMARKS.md)**  
-- asyncio: **[USAGE.md](USAGE.md)** (*asyncio*); **`from pyuring.aio import UringAsync`** (also **`from pyuring import UringAsync`**)
+- Installation and build: **[docs/INSTALLATION.md](docs/INSTALLATION.md)**  
+- Benchmarks: **[docs/BENCHMARKS.md](docs/BENCHMARKS.md)**  
+- asyncio: **[docs/USAGE.md](docs/USAGE.md)** (*asyncio*); **`from pyuring.aio import UringAsync`** (also **`from pyuring import UringAsync`**)
 
 ## Quick examples
 
@@ -110,6 +117,8 @@ with iou.direct.UringCtx(entries=64) as ctx:
 
 ## Tests
 
+Policy and mandatory areas: **[docs/TESTING.md](docs/TESTING.md)**. Default runner is **`unittest`**; **`pytest`** is optional.
+
 After a local build:
 
 ```bash
@@ -117,7 +126,7 @@ make && python3 examples/test_dynamic_buffer.py
 PYTHONPATH=. python3 -m unittest discover -s tests -v
 ```
 
-The **`tests/`** package covers probe helpers, optional setup flags (skipped if the kernel rejects a flag combination), and fixed file/buffer registration with **`read_fixed`** / **`write_fixed`**.
+The **`tests/`** package covers probe helpers, optional setup flags (skipped if the kernel rejects a flag combination), fixed file/buffer registration, aio/cancel/timeout/peek regressions, and more—see **docs/TESTING.md**.
 
 If you installed from PyPI and want to run those scripts from a checkout, run them from a directory that does **not** put the repo root on `PYTHONPATH` first—otherwise `import pyuring` can pick up the tree without a built `.so` and fail.
 
