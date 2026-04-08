@@ -6,29 +6,27 @@ dynamically adjusting buffer sizes at runtime.
 """
 
 from pyuring._native import (
-    IORING_OP_NOP,
-    IORING_OP_READ,
-    IORING_OP_READ_FIXED,
-    IORING_OP_READV,
-    IORING_OP_WRITE,
-    IORING_OP_WRITE_FIXED,
-    IORING_OP_WRITEV,
-    IORING_SETUP_COOP_TASKRUN,
-    IORING_SETUP_DEFER_TASKRUN,
-    IORING_SETUP_IOPOLL,
-    IORING_SETUP_SINGLE_ISSUER,
-    IORING_SETUP_SQPOLL,
-    IORING_SETUP_SQ_AFF,
-    UringError,
-    UringCtx,
     BufferPool,
+    EpollEvent,
+    FutexWaitv,
+    OpenHow,
+    SIGINFO_T_SIZE,
+    UAPI_CONSTANT_NAMES,
+    UringCtx,
+    UringError,
     copy_path,
     copy_path_dynamic,
+    write_manyfiles,
     write_newfile,
     write_newfile_dynamic,
-    write_manyfiles,
 )
 from pyuring._easy import copy, write, write_many
+
+import pyuring._native as _native
+
+for _name in UAPI_CONSTANT_NAMES:
+    globals()[_name] = getattr(_native, _name)
+del _name, _native
 
 __version__ = "0.1.2"
 
@@ -50,33 +48,26 @@ direct.write_manyfiles = write_manyfiles
 # Backward-compatible alias
 raw = direct
 
-__all__ = [
-    "copy",
-    "write",
-    "write_many",
-    "direct",
-    "raw",
-
-    "IORING_OP_NOP",
-    "IORING_OP_READ",
-    "IORING_OP_READ_FIXED",
-    "IORING_OP_READV",
-    "IORING_OP_WRITE",
-    "IORING_OP_WRITE_FIXED",
-    "IORING_OP_WRITEV",
-    "IORING_SETUP_COOP_TASKRUN",
-    "IORING_SETUP_DEFER_TASKRUN",
-    "IORING_SETUP_IOPOLL",
-    "IORING_SETUP_SINGLE_ISSUER",
-    "IORING_SETUP_SQPOLL",
-    "IORING_SETUP_SQ_AFF",
-
-    "UringError",
-    "UringCtx",
-    "BufferPool",
-    "copy_path",
-    "copy_path_dynamic",
-    "write_newfile",
-    "write_newfile_dynamic",
-    "write_manyfiles",
-]
+__all__ = (
+    [
+        "copy",
+        "write",
+        "write_many",
+        "direct",
+        "raw",
+        "UAPI_CONSTANT_NAMES",
+        "EpollEvent",
+        "FutexWaitv",
+        "OpenHow",
+        "SIGINFO_T_SIZE",
+        "UringError",
+        "UringCtx",
+        "BufferPool",
+        "copy_path",
+        "copy_path_dynamic",
+        "write_newfile",
+        "write_newfile_dynamic",
+        "write_manyfiles",
+    ]
+    + list(UAPI_CONSTANT_NAMES)
+)

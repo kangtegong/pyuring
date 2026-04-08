@@ -7,10 +7,21 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <arpa/inet.h>
+#include <linux/falloc.h>
+#include <linux/stat.h>
+#include <netinet/in.h>
 #include <sys/stat.h>
+#include <signal.h>
+#include <sys/socket.h>
 #include <sys/types.h>
 #include <sys/uio.h>
+#include <sys/wait.h>
 #include <unistd.h>
+
+#include <linux/time_types.h>
+#include <sys/epoll.h>
+/* struct open_how comes from liburing compat / linux headers */
 
 typedef struct uring_ctx {
   struct io_uring ring;
@@ -1368,4 +1379,1160 @@ out:
   return written;
 }
 
+// ============================================================================
+// Extended synchronous op wrappers (readv, vfs, sockets, splice, timeout, link)
+// ============================================================================
+
+static int uring_submit_wait_one(uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+  struct io_uring_cqe *cqe = NULL;
+  ret = io_uring_wait_cqe(&ctx->ring, &cqe);
+  if (ret < 0) {
+    return ret;
+  }
+  int res = cqe->res;
+  io_uring_cqe_seen(&ctx->ring, cqe);
+  return res;
+}
+
+int uring_nop_sync(uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_nop(sqe);
+  sqe->user_data = 199;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_readv_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned iovcnt, long long offset) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_readv(sqe, fd, iov, iovcnt, (off_t)offset);
+  sqe->user_data = 200;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_writev_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned iovcnt, long long offset) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_writev(sqe, fd, iov, iovcnt, (off_t)offset);
+  sqe->user_data = 201;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_openat_sync(uring_ctx *ctx, int dfd, const char *path, int flags, unsigned int mode) {
+  if (!ctx || !path) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_openat(sqe, dfd, path, flags, (mode_t)mode);
+  sqe->user_data = 202;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_close_sync(uring_ctx *ctx, int fd) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_close(sqe, fd);
+  sqe->user_data = 203;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_fsync_sync(uring_ctx *ctx, int fd, unsigned int fsync_flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_fsync(sqe, fd, fsync_flags);
+  sqe->user_data = 204;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_fallocate_sync(uring_ctx *ctx, int fd, int mode, uint64_t offset, uint64_t len) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_fallocate(sqe, fd, mode, offset, len);
+  sqe->user_data = 205;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_statx_sync(uring_ctx *ctx, int dfd, const char *path, int flags, unsigned int mask,
+                     struct statx *statxbuf) {
+  if (!ctx || !path || !statxbuf) {
+    return -EINVAL;
+  }
+  memset(statxbuf, 0, sizeof(*statxbuf));
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_statx(sqe, dfd, path, flags, mask, statxbuf);
+  sqe->user_data = 206;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_renameat_sync(uring_ctx *ctx, int olddfd, const char *oldpath, int newdfd, const char *newpath,
+                       unsigned int flags) {
+  if (!ctx || !oldpath || !newpath) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_renameat(sqe, olddfd, oldpath, newdfd, newpath, flags);
+  sqe->user_data = 207;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_unlinkat_sync(uring_ctx *ctx, int dfd, const char *path, int flags) {
+  if (!ctx || !path) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_unlinkat(sqe, dfd, path, flags);
+  sqe->user_data = 208;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_mkdirat_sync(uring_ctx *ctx, int dfd, const char *path, unsigned int mode) {
+  if (!ctx || !path) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_mkdirat(sqe, dfd, path, (mode_t)mode);
+  sqe->user_data = 209;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_send_sync(uring_ctx *ctx, int sockfd, const void *buf, size_t len, unsigned int flags) {
+  if (!ctx || (!buf && len > 0)) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_send(sqe, sockfd, buf, len, (int)flags);
+  sqe->user_data = 210;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_recv_sync(uring_ctx *ctx, int sockfd, void *buf, size_t len, unsigned int flags) {
+  if (!ctx || (!buf && len > 0)) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_recv(sqe, sockfd, buf, len, (int)flags);
+  sqe->user_data = 211;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_accept_sync(uring_ctx *ctx, int fd, struct sockaddr *addr, socklen_t *addrlen, int flags) {
+  if (!ctx || !addrlen) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_accept(sqe, fd, addr, addrlen, flags);
+  sqe->user_data = 212;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_connect_sync(uring_ctx *ctx, int fd, const struct sockaddr *addr, socklen_t addrlen) {
+  if (!ctx || !addr) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_connect(sqe, fd, addr, addrlen);
+  sqe->user_data = 213;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_shutdown_sync(uring_ctx *ctx, int fd, int how) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_shutdown(sqe, fd, how);
+  sqe->user_data = 214;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_splice_sync(uring_ctx *ctx, int fd_in, int64_t off_in, int fd_out, int64_t off_out,
+                      unsigned int nbytes, unsigned int splice_flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_splice(sqe, fd_in, off_in, fd_out, off_out, nbytes, splice_flags);
+  sqe->user_data = 215;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_tee_sync(uring_ctx *ctx, int fd_in, int fd_out, unsigned int nbytes, unsigned int splice_flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_tee(sqe, fd_in, fd_out, nbytes, splice_flags);
+  sqe->user_data = 228;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_poll_add_sync(uring_ctx *ctx, int fd, unsigned int poll_mask, uint64_t user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_poll_add(sqe, fd, poll_mask);
+  sqe->user_data = user_data;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_poll_remove_sync(uring_ctx *ctx, uint64_t target_user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_poll_remove(sqe, target_user_data);
+  sqe->user_data = 229;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_symlinkat_sync(uring_ctx *ctx, const char *target, int newdirfd, const char *linkpath) {
+  if (!ctx || !target || !linkpath) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_symlinkat(sqe, target, newdirfd, linkpath);
+  sqe->user_data = 230;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_linkat_sync(uring_ctx *ctx, int olddfd, const char *oldpath, int newdfd, const char *newpath, int flags) {
+  if (!ctx || !oldpath || !newpath) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_linkat(sqe, olddfd, oldpath, newdfd, newpath, flags);
+  sqe->user_data = 231;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_sync_file_range_sync(uring_ctx *ctx, int fd, unsigned int len, uint64_t offset, int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_sync_file_range(sqe, fd, len, offset, flags);
+  sqe->user_data = 232;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_fadvise_sync(uring_ctx *ctx, int fd, uint64_t offset, unsigned int len, int advice) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_fadvise(sqe, fd, offset, len, advice);
+  sqe->user_data = 233;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_madvise_sync(uring_ctx *ctx, void *addr, unsigned int length, int advice) {
+  if (!ctx || !addr || length == 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_madvise(sqe, addr, length, advice);
+  sqe->user_data = 234;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_async_cancel_fd_sync(uring_ctx *ctx, int fd, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_cancel_fd(sqe, fd, flags);
+  sqe->user_data = 235;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_sendmsg_iov_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned int iovcnt, unsigned int flags) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = iov;
+  msg.msg_iovlen = (int)iovcnt;
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_sendmsg(sqe, fd, &msg, flags);
+  sqe->user_data = 236;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_recvmsg_iov_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned int iovcnt, unsigned int flags) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = iov;
+  msg.msg_iovlen = (int)iovcnt;
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_recvmsg(sqe, fd, &msg, flags);
+  sqe->user_data = 237;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_socket_sync(uring_ctx *ctx, int domain, int type, int protocol, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_socket(sqe, domain, type, protocol, flags);
+  sqe->user_data = 238;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_pipe_sync(uring_ctx *ctx, int *fds, int pipe_flags) {
+  if (!ctx || !fds) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_pipe(sqe, fds, pipe_flags);
+  sqe->user_data = 239;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_bind_sync(uring_ctx *ctx, int fd, const struct sockaddr *addr, socklen_t addrlen) {
+  if (!ctx || !addr) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_bind(sqe, fd, addr, addrlen);
+  sqe->user_data = 240;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_listen_sync(uring_ctx *ctx, int fd, int backlog) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_listen(sqe, fd, backlog);
+  sqe->user_data = 241;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_openat2_sync(uring_ctx *ctx, int dfd, const char *path, const struct open_how *how) {
+  if (!ctx || !path || !how) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_openat2(sqe, dfd, path, how);
+  sqe->user_data = 242;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_link_timeout_sync(uring_ctx *ctx, const struct __kernel_timespec *ts, unsigned int flags) {
+  if (!ctx || !ts) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_link_timeout(sqe, ts, flags);
+  sqe->user_data = 243;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_getxattr_sync(uring_ctx *ctx, const char *name, char *value, const char *path, unsigned int len) {
+  if (!ctx || !name || !value || !path) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_getxattr(sqe, name, value, path, len);
+  sqe->user_data = 244;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_setxattr_sync(uring_ctx *ctx, const char *name, const char *value, const char *path, int flags,
+                        unsigned int len) {
+  if (!ctx || !name || !value || !path) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_setxattr(sqe, name, value, path, flags, len);
+  sqe->user_data = 245;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_fgetxattr_sync(uring_ctx *ctx, int fd, const char *name, char *value, unsigned int len) {
+  if (!ctx || !name || !value) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_fgetxattr(sqe, fd, name, value, len);
+  sqe->user_data = 246;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_fsetxattr_sync(uring_ctx *ctx, int fd, const char *name, const char *value, int flags,
+                         unsigned int len) {
+  if (!ctx || !name || !value) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_fsetxattr(sqe, fd, name, value, flags, len);
+  sqe->user_data = 247;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_epoll_ctl_sync(uring_ctx *ctx, int epfd, int fd, int op, struct epoll_event *ev) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_epoll_ctl(sqe, epfd, fd, op, ev);
+  sqe->user_data = 248;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_provide_buffers_sync(uring_ctx *ctx, void *addr, int len, int nr, int bgid, int bid) {
+  if (!ctx || !addr || len <= 0 || nr <= 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_provide_buffers(sqe, addr, len, nr, bgid, bid);
+  sqe->user_data = 249;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_remove_buffers_sync(uring_ctx *ctx, int nr, int bgid) {
+  if (!ctx || nr <= 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_remove_buffers(sqe, nr, bgid);
+  sqe->user_data = 250;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_msg_ring_sync(uring_ctx *ctx, int fd, unsigned int len, uint64_t data, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_msg_ring(sqe, fd, len, data, flags);
+  sqe->user_data = 251;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_ftruncate_sync(uring_ctx *ctx, int fd, long long len) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_ftruncate(sqe, fd, (loff_t)len);
+  sqe->user_data = 252;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_nop128_sync(uring_ctx *ctx) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_nop128(sqe);
+  sqe->user_data = 260;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_poll_update_sync(uring_ctx *ctx, uint64_t old_user_data, uint64_t new_user_data, unsigned int poll_mask,
+                           unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_poll_update(sqe, old_user_data, new_user_data, poll_mask, flags);
+  sqe->user_data = 261;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_timeout_update_sync(uring_ctx *ctx, const struct __kernel_timespec *ts, uint64_t target_user_data,
+                              unsigned int flags) {
+  if (!ctx || !ts) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_timeout_update(sqe, ts, target_user_data, flags);
+  sqe->user_data = 262;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_recv_multishot_sync(uring_ctx *ctx, int sockfd, void *buf, size_t len, int msg_flags) {
+  if (!ctx || (!buf && len > 0)) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_recv_multishot(sqe, sockfd, buf, len, msg_flags);
+  sqe->user_data = 263;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_send_zc_sync(uring_ctx *ctx, int sockfd, const void *buf, size_t len, int msg_flags, unsigned int zc_flags) {
+  if (!ctx || (!buf && len > 0)) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_send_zc(sqe, sockfd, buf, len, msg_flags, zc_flags);
+  sqe->user_data = 264;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_send_zc_fixed_sync(uring_ctx *ctx, int sockfd, const void *buf, size_t len, int msg_flags,
+                            unsigned int zc_flags, unsigned int buf_index) {
+  if (!ctx || (!buf && len > 0)) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_send_zc_fixed(sqe, sockfd, buf, len, msg_flags, zc_flags, buf_index);
+  sqe->user_data = 265;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_sendmsg_zc_iov_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned int iovcnt, unsigned int flags) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = iov;
+  msg.msg_iovlen = (int)iovcnt;
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_sendmsg_zc(sqe, fd, &msg, flags);
+  sqe->user_data = 266;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_sendmsg_zc_fixed_iov_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned int iovcnt,
+                                    unsigned int flags, unsigned int buf_index) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = iov;
+  msg.msg_iovlen = (int)iovcnt;
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_sendmsg_zc_fixed(sqe, fd, &msg, flags, buf_index);
+  sqe->user_data = 267;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_recv_zc_sync(uring_ctx *ctx, int fd, void *buf, unsigned int len, unsigned int msg_flags,
+                       unsigned int ioprio_zc) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_rw(IORING_OP_RECV_ZC, sqe, fd, buf, len, 0);
+  sqe->msg_flags = msg_flags;
+  sqe->ioprio = (__u32)ioprio_zc;
+  sqe->user_data = 268;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_recvmsg_multishot_iov_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned int iovcnt,
+                                     unsigned int flags) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct msghdr msg;
+  memset(&msg, 0, sizeof(msg));
+  msg.msg_iov = iov;
+  msg.msg_iovlen = (int)iovcnt;
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_recvmsg_multishot(sqe, fd, &msg, flags);
+  sqe->user_data = 269;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_epoll_wait_sync(uring_ctx *ctx, int epfd, struct epoll_event *events, int maxevents, unsigned int flags) {
+  if (!ctx || !events || maxevents <= 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_epoll_wait(sqe, epfd, events, maxevents, flags);
+  sqe->user_data = 270;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_waitid_sync(uring_ctx *ctx, int idtype, int id, siginfo_t *infop, int options, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_waitid(sqe, (idtype_t)idtype, (id_t)id, infop, options, flags);
+  sqe->user_data = 271;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_futex_wake_sync(uring_ctx *ctx, const uint32_t *futex, uint64_t val, uint64_t mask, uint32_t futex_flags,
+                          unsigned int flags) {
+  if (!ctx || !futex) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_futex_wake(sqe, futex, val, mask, futex_flags, flags);
+  sqe->user_data = 272;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_futex_wait_sync(uring_ctx *ctx, const uint32_t *futex, uint64_t val, uint64_t mask, uint32_t futex_flags,
+                          unsigned int flags) {
+  if (!ctx || !futex) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_futex_wait(sqe, futex, val, mask, futex_flags, flags);
+  sqe->user_data = 273;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_futex_waitv_sync(uring_ctx *ctx, const struct futex_waitv *futex, uint32_t nr_futex, unsigned int flags) {
+  if (!ctx || !futex || nr_futex == 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_futex_waitv(sqe, futex, nr_futex, flags);
+  sqe->user_data = 274;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_uring_cmd_sync(uring_ctx *ctx, int cmd_op, int fd) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_uring_cmd(sqe, cmd_op, fd);
+  sqe->user_data = 275;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_uring_cmd128_sync(uring_ctx *ctx, int cmd_op, int fd) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_uring_cmd128(sqe, cmd_op, fd);
+  sqe->user_data = 276;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_cmd_sock_sync(uring_ctx *ctx, int cmd_op, int fd, int level, int optname, void *optval, int optlen) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_cmd_sock(sqe, cmd_op, fd, level, optname, optval, optlen);
+  sqe->user_data = 277;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_cmd_getsockname_sync(uring_ctx *ctx, int fd, struct sockaddr *addr, socklen_t *addrlen, int peer) {
+  if (!ctx || !addr || !addrlen) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_cmd_getsockname(sqe, fd, addr, addrlen, peer);
+  sqe->user_data = 278;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_fixed_fd_install_sync(uring_ctx *ctx, int fd, unsigned int install_flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_fixed_fd_install(sqe, fd, install_flags);
+  sqe->user_data = 279;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_socket_direct_sync(uring_ctx *ctx, int domain, int type, int protocol, unsigned int file_index,
+                             unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_socket_direct(sqe, domain, type, protocol, file_index, flags);
+  sqe->user_data = 280;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_socket_direct_alloc_sync(uring_ctx *ctx, int domain, int type, int protocol, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_socket_direct_alloc(sqe, domain, type, protocol, flags);
+  sqe->user_data = 281;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_pipe_direct_sync(uring_ctx *ctx, int *fds, int pipe_flags, unsigned int file_index) {
+  if (!ctx || !fds) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_pipe_direct(sqe, fds, pipe_flags, file_index);
+  sqe->user_data = 282;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_msg_ring_fd_sync(uring_ctx *ctx, int fd, int source_fd, int target_fd, uint64_t data, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_msg_ring_fd(sqe, fd, source_fd, target_fd, data, flags);
+  sqe->user_data = 283;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_msg_ring_fd_alloc_sync(uring_ctx *ctx, int fd, int source_fd, uint64_t data, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_msg_ring_fd_alloc(sqe, fd, source_fd, data, flags);
+  sqe->user_data = 284;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_msg_ring_cqe_flags_sync(uring_ctx *ctx, int fd, unsigned int len, uint64_t data, unsigned int flags,
+                                  unsigned int cqe_flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_msg_ring_cqe_flags(sqe, fd, len, data, flags, cqe_flags);
+  sqe->user_data = 285;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_files_update_sync(uring_ctx *ctx, int *fds, unsigned int nr_fds, int offset) {
+  if (!ctx || (!fds && nr_fds > 0)) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_files_update(sqe, fds, nr_fds, offset);
+  sqe->user_data = 286;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_send_bundle_sync(uring_ctx *ctx, int sockfd, size_t len, int msg_flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_send_bundle(sqe, sockfd, len, msg_flags);
+  sqe->user_data = 287;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_readv_fixed_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned int iovcnt, uint64_t offset,
+                           int rw_flags, int buf_index) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_readv_fixed(sqe, fd, iov, iovcnt, offset, rw_flags, buf_index);
+  sqe->user_data = 288;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_writev_fixed_sync(uring_ctx *ctx, int fd, struct iovec *iov, unsigned int iovcnt, uint64_t offset,
+                            int rw_flags, int buf_index) {
+  if (!ctx || !iov || iovcnt == 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_writev_fixed(sqe, fd, iov, iovcnt, offset, rw_flags, buf_index);
+  sqe->user_data = 289;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_sendto_sync(uring_ctx *ctx, int sockfd, const void *buf, size_t len, int msg_flags,
+                      const struct sockaddr *addr, socklen_t addrlen) {
+  if (!ctx || (!buf && len > 0)) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_sendto(sqe, sockfd, buf, len, msg_flags, addr, addrlen);
+  sqe->user_data = 290;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_timeout_sync(uring_ctx *ctx, const struct __kernel_timespec *ts, unsigned int count,
+                       unsigned int timeout_flags, uint64_t user_data) {
+  if (!ctx || !ts) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_timeout(sqe, ts, count, timeout_flags);
+  sqe->user_data = user_data;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_timeout_remove_sync(uring_ctx *ctx, uint64_t target_user_data, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_timeout_remove(sqe, target_user_data, flags);
+  sqe->user_data = 216;
+  return uring_submit_wait_one(ctx);
+}
+
+int uring_async_cancel_sync(uring_ctx *ctx, uint64_t cancel_user_data, unsigned int flags) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_cancel64(sqe, cancel_user_data, (int)flags);
+  sqe->user_data = 217;
+  return uring_submit_wait_one(ctx);
+}
+
+// Submit read linked to write (same buffer). Waits for two CQEs; returns write result or error.
+int uring_link_read_write_sync(uring_ctx *ctx, int fd_in, void *buf, unsigned len, long long off_in,
+                               int fd_out, long long off_out) {
+  if (!ctx || !buf || len == 0) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe1 = io_uring_get_sqe(&ctx->ring);
+  struct io_uring_sqe *sqe2 = io_uring_get_sqe(&ctx->ring);
+  if (!sqe1 || !sqe2) {
+    return -EAGAIN;
+  }
+  io_uring_prep_read(sqe1, fd_in, buf, len, (off_t)off_in);
+  sqe1->user_data = 301;
+  sqe1->flags |= IOSQE_IO_LINK;
+
+  io_uring_prep_write(sqe2, fd_out, buf, len, (off_t)off_out);
+  sqe2->user_data = 302;
+
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+  for (int i = 0; i < 2; i++) {
+    struct io_uring_cqe *cqe = NULL;
+    ret = io_uring_wait_cqe(&ctx->ring, &cqe);
+    if (ret < 0) {
+      return ret;
+    }
+    int res = cqe->res;
+    uint64_t ud = cqe->user_data;
+    io_uring_cqe_seen(&ctx->ring, cqe);
+    if (res < 0) {
+      return res;
+    }
+    if (i == 1 && ud == 302) {
+      return res;
+    }
+  }
+  return -EIO;
+}
+
+uint64_t uring_statx_stx_size(const struct statx *sx) {
+  if (!sx) {
+    return 0;
+  }
+  return (uint64_t)sx->stx_size;
+}
+
+// Submit a long timeout then its removal in one submit; wait for two CQEs (cancels the sleep).
+int uring_timeout_arm_remove_pair_sync(uring_ctx *ctx, int64_t sec, int64_t nsec, uint64_t timeout_user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct __kernel_timespec ts;
+  memset(&ts, 0, sizeof(ts));
+  ts.tv_sec = sec;
+  ts.tv_nsec = nsec;
+
+  struct io_uring_sqe *t = io_uring_get_sqe(&ctx->ring);
+  if (!t) {
+    return -EAGAIN;
+  }
+  io_uring_prep_timeout(t, &ts, 0, 0);
+  t->user_data = timeout_user_data;
+
+  struct io_uring_sqe *r = io_uring_get_sqe(&ctx->ring);
+  if (!r) {
+    return -EAGAIN;
+  }
+  io_uring_prep_timeout_remove(r, timeout_user_data, 0);
+  r->user_data = timeout_user_data + 1;
+
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+  for (int i = 0; i < 2; i++) {
+    struct io_uring_cqe *cqe = NULL;
+    ret = io_uring_wait_cqe(&ctx->ring, &cqe);
+    if (ret < 0) {
+      return ret;
+    }
+    int res = cqe->res;
+    io_uring_cqe_seen(&ctx->ring, cqe);
+    /* Timeout op may complete with -ETIME; remove/cancel paths may use -ECANCELED. */
+    if (res < 0 && res != -ETIME && res != -ECANCELED) {
+      return res;
+    }
+  }
+  return 0;
+}
 

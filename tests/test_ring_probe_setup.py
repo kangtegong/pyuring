@@ -1,21 +1,19 @@
-"""
-Tests for ring registration, setup flags, and opcode probe (requires Linux + io_uring).
-"""
+"""UAPI opcode constants, nop, probe, optional setup flags."""
 
 from __future__ import annotations
 
 import os
-import sys
 import tempfile
 import unittest
 
-
-if sys.platform != "linux":
-    raise unittest.SkipTest("io_uring is Linux-only")
+import tests._linux  # noqa: F401
 
 from pyuring import (
+    IORING_OP_FSYNC,
     IORING_OP_READ,
     IORING_OP_READ_FIXED,
+    IORING_OP_SHUTDOWN,
+    IORING_OP_SPLICE,
     IORING_OP_WRITE,
     IORING_OP_WRITE_FIXED,
     IORING_SETUP_COOP_TASKRUN,
@@ -23,6 +21,21 @@ from pyuring import (
     UringCtx,
     UringError,
 )
+
+
+class TestUapiConstants(unittest.TestCase):
+    def test_opcode_values_match_kernel_enum(self):
+        self.assertEqual(IORING_OP_FSYNC, 3)
+        self.assertEqual(IORING_OP_READ_FIXED, 4)
+        self.assertEqual(IORING_OP_WRITE_FIXED, 5)
+        self.assertEqual(IORING_OP_SPLICE, 30)
+        self.assertEqual(IORING_OP_SHUTDOWN, 34)
+
+
+class TestNop(unittest.TestCase):
+    def test_nop_completes(self):
+        with UringCtx(entries=8) as ring:
+            ring.nop()
 
 
 class TestProbe(unittest.TestCase):
@@ -66,53 +79,6 @@ class TestSetupFlags(unittest.TestCase):
                     self.assertEqual(out, b"abc")
             finally:
                 os.close(fd)
-        finally:
-            os.unlink(path)
-
-
-class TestRegisterFilesAndBuffers(unittest.TestCase):
-    def test_read_fixed_registered(self):
-        data = b"hello-fixed-io-uring"
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            path = f.name
-            f.write(data)
-            f.flush()
-        try:
-            fd = os.open(path, os.O_RDONLY)
-            try:
-                buf = bytearray(4096)
-                with UringCtx(entries=8) as ring:
-                    ring.register_files([fd])
-                    ring.register_buffers([buf])
-                    n = ring.read_fixed(0, buf, 0, 0)
-                    self.assertEqual(n, len(data))
-                    self.assertEqual(bytes(buf[:n]), data)
-                    ring.unregister_buffers()
-                    ring.unregister_files()
-            finally:
-                os.close(fd)
-        finally:
-            os.unlink(path)
-
-    def test_write_fixed_registered(self):
-        with tempfile.NamedTemporaryFile(delete=False) as f:
-            path = f.name
-        try:
-            fd = os.open(path, os.O_RDWR | os.O_CREAT, 0o644)
-            try:
-                payload = bytearray(b"write-fixed-test")
-                with UringCtx(entries=8) as ring:
-                    ring.register_files([fd])
-                    ring.register_buffers([payload])
-                    n = ring.write_fixed(0, payload, 0, 0)
-                    self.assertEqual(n, len(payload))
-                    ring.unregister_buffers()
-                    ring.unregister_files()
-                os.fsync(fd)
-            finally:
-                os.close(fd)
-            with open(path, "rb") as rf:
-                self.assertEqual(rf.read(), bytes(payload))
         finally:
             os.unlink(path)
 

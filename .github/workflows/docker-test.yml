@@ -1,0 +1,25 @@
+# Run tests inside Docker images (glibc distros). Requires io_uring (host kernel + seccomp relaxed in container).
+name: Docker matrix
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+
+jobs:
+  docker:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - ubuntu:20.04
+          - ubuntu:22.04
+          - ubuntu:24.04
+          - debian:bookworm-slim
+          - fedora:40
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker test (${{ matrix.image }})
+        run: BASE_IMAGES="${{ matrix.image }}" ./scripts/docker-test-matrix.sh
