@@ -1,20 +1,6 @@
-## 설치·배포 (가장 먼저)
-- [x] manylinux / musllinux 바이너리 휠 (cibuildwheel + auditwheel). sdist-only면 사용자마다 컴파일·헤더 의존이 남는다. *(manylinux: `pyproject.toml` `[tool.cibuildwheel]` + `scripts/cibw_before_all.sh`; musllinux는 스킵 — 추후 검증 후 활성화)*
-- [x] 휠에 포함되는 `liburingwrap.so`와 시스템 liburing 동적 링크 조합을 명확히 하고, 지원 glibc/아키텍처 표를 문서화한다. *(INSTALLATION.md `Binary wheels` 섹션 + CI에서 vendored 정적 링크)*
-
 ## CI·품질 게이트
 - [ ] 메인 저장소 CI (Linux 전용): `make`, `python -m unittest`, 최소 한 개 최신 커널/배포 조합.
 - [ ] io_uring은 Docker 기본 seccomp에서 막히므로, CI에서 seccomp 완화 또는 호스트 러너 전제를 문서/워크플로에 명시.
-- [ ] (선택) `scripts/docker-test-matrix.sh`를 주기적으로 돌리거나 CI 잡으로 승격.
-
-## 예외·에러 모델 (라이브러리 소비자 경험)
-- [ ] `UringError`에 정수 `errno` 보존 (및 가능하면 `OSError`와 동일한 의미로 매핑). 문자열만으로는 `EAGAIN`/`ENOENT` 분기가 번거롭다.
-- [ ] ctypes 경로에서 실패 시 일관된 메시지 포맷(어떤 syscall/래퍼 단계인지).
-
-## 타입·API 발견성
-- [ ] PEP 561: `py.typed` 배포.
-- [ ] 공개 API(`UringCtx`, 고수준 `copy`/`write`, `BufferPool` 등)에 대한 인라인 타입 또는 `.pyi` 정리.
-- [ ] `help()`/문서에서 자주 쓰는 패턴만이라도 “권장 사용법” 요약 (예: fixed buffer 생명주기).
 
 ## 비동기·이벤트 루프 (파이썬 “완벽” 경험의 핵심)
 - [ ] `asyncio` 통합: 완료 큐/uring fd를 루프에 등록하거나, executor + 명확한 취소 시맨틱 중 하나를 선택해 실험적 모듈로 제공.

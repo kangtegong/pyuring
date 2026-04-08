@@ -1,6 +1,21 @@
 # pyuring — API specification
 
-This document describes the public Python API of the [pyuring](https://github.com/kangtegong/pyuring) package. Symbols are loaded from **`liburingwrap.so`** (built from this repository’s C sources). Errors from the native layer raise **`UringError`** (subclass of `RuntimeError`).
+This document describes the public Python API of the [pyuring](https://github.com/kangtegong/pyuring) package. Symbols are loaded from **`liburingwrap.so`** (built from this repository’s C sources). Errors from the native layer raise **`UringError`**, a subclass of **`OSError`**: use **`exc.errno`** (and optionally **`exc.operation`**) for programmatic handling.
+
+## Errors and messages
+
+| Field / behavior | Meaning |
+|------------------|---------|
+| **`errno`** | Kernel-style errno (same meaning as in **`os`**, **`OSError`**). |
+| **`operation`** | Which ctypes wrapper failed (e.g. **`"uring_read_fixed_sync"`**, **`"uring_create_ex"`**). |
+| **`detail`** | Optional multi-line hint (e.g. search paths when **`liburingwrap.so`** is missing). |
+| **String form** | **`{operation}: {strerror}`**, plus **`detail`** when present. |
+
+## Recommended patterns
+
+- **Fixed files / buffers:** Keep FDs and mutable buffers (e.g. **`bytearray`**) alive for the whole time they are registered or used in-flight. Call **`unregister_files`** / **`unregister_buffers`** (or **`close()`** on **`UringCtx`**) when done.
+- **Context managers:** Prefer **`with UringCtx(...) as ctx:`** and **`with BufferPool.create(...) as pool:`** so the ring and pool are torn down reliably.
+- **Branching on failure:** `except UringError as e:` then **`if e.errno == errno.EEXIST:`** (etc.), not string parsing.
 
 ## Naming
 
@@ -9,7 +24,7 @@ This document describes the public Python API of the [pyuring](https://github.co
 | **Orchestrated helpers** | Module-level functions **`copy`**, **`write`**, **`write_many`** that forward to the direct bindings with **preset tuning** controlled by **`mode`**. |
 | **Direct bindings** | The ctypes-backed functions and classes: available at **package top level**, and grouped on **`pyuring.direct`** for qualified access. **`pyuring.raw`** is an alias of **`pyuring.direct`** (backward compatibility only). |
 
-Unless noted, numeric parameters are passed through to C; invalid combinations may raise **`UringError`** with a negative errno-style message.
+Unless noted, numeric parameters are passed through to C; invalid combinations may raise **`UringError`** with a matching **`errno`** (see **Errors and messages** above).
 
 ---
 
@@ -174,7 +189,7 @@ Fixed pool of buffers allocated in native code; use with **`read_async`** / **`w
 
 | Type | When |
 |------|------|
-| **`UringError`** | Native call failed (e.g. queue init, I/O error); message includes errno interpretation where available. |
+| **`UringError`** | Subclass of **`OSError`**. Native call failed (e.g. queue init, I/O). **`errno`** is set; **`operation`** names the wrapper; see **Errors and messages** at the top of this file. |
 
 ---
 

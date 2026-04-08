@@ -28,7 +28,7 @@ Debian/Ubuntu: `liburing-dev`. Fedora/RHEL: `liburing-devel`. Arch: `liburing`. 
 
 ## API reference (overview)
 
-The package loads native code from `liburingwrap.so`. Operations that fail in the C layer raise **`UringError`** (`RuntimeError` subclass); error strings typically include a negated errno.
+The package loads native code from `liburingwrap.so`. Operations that fail in the C layer raise **`UringError`** (subclass of **`OSError`**); **`errno`** matches the kernel errno, and **`operation`** names the failing wrapper. See **[USAGE.md](USAGE.md)** for message format and recommended patterns.
 
 **Exports.** Public symbols are available from the package root (`from pyuring import copy, UringCtx, …`). The namespace object **`pyuring.direct`** exposes the same callables and types as attributes. **`pyuring.raw`** is a backward-compatible alias of **`pyuring.direct`**.
 
@@ -79,7 +79,7 @@ Path arguments are **`str`**. Optional **`buffer_size_cb`** callbacks receive **
 
 **`class UringError`**
 
-- Base: **`RuntimeError`**. Raised when native entry points report failure.
+- Base: **`OSError`**. **`errno`** / **`operation`** / optional **`detail`**; see **[USAGE.md](USAGE.md)** (**Errors and messages**).
 
 ### Other documentation
 

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import os
 
 from .errors import UringError
@@ -27,13 +28,14 @@ def _find_library():
     except OSError:
         pass
 
-    raise UringError(
-        f"liburingwrap.so not found. Tried:\n"
+    detail = (
+        f"Tried:\n"
         f"  - {installed_path}\n"
         f"  - {build_path}\n"
-        f"  - system library\n"
-        f"Please ensure the package is properly installed."
+        f"  - system library (ctypes CDLL)\n"
+        f"Ensure the package is built/installed so liburingwrap.so is available."
     )
+    raise UringError(errno.ENOENT, "_find_library", detail=detail)
 
 
 def _get_lib():

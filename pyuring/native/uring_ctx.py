@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 import gc
 import mmap
 import os
@@ -295,9 +296,14 @@ class UringCtx:
             int(entries), int(setup_flags) & 0xFFFFFFFF, int(sq_thread_cpu), int(sq_thread_idle) & 0xFFFFFFFF
         )
         if not ctx:
-            raise UringError(
-                "uring_create_ex failed (NULL). Is liburing installed and does the kernel support io_uring?"
+            err = ctypes.get_errno()
+            if err == 0:
+                err = errno.EOPNOTSUPP
+            detail = (
+                "io_uring_queue_init_params failed (NULL return). "
+                "Check that liburing is usable and the kernel supports io_uring for these flags."
             )
+            raise UringError(err, "uring_create_ex", detail=detail)
         self._ctx = ctx
 
     def register_files(self, fds: Sequence[int]) -> None:

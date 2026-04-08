@@ -91,7 +91,7 @@ setup(
     },
     packages=["pyuring", "pyuring.lib", "pyuring.native"],
     package_data={
-        "pyuring": ["lib/liburingwrap.so"],
+        "pyuring": ["lib/liburingwrap.so", "py.typed", "__init__.pyi"],
     },
     include_package_data=True,
     python_requires=">=3.8",

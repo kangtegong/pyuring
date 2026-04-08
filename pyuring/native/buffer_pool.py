@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import ctypes
+import errno
 from ctypes import POINTER, byref, c_int, c_uint, c_void_p
 from typing import Tuple
 
@@ -37,7 +38,8 @@ class BufferPool:
 
         pool_ptr = lib.uring_buffer_pool_create(initial_count, initial_size)
         if not pool_ptr:
-            raise UringError("Failed to create buffer pool")
+            err = ctypes.get_errno() or errno.ENOMEM
+            raise UringError(err, "uring_buffer_pool_create")
         return cls(lib, pool_ptr)
 
     def resize(self, index: int, new_size: int) -> None:
@@ -50,7 +52,7 @@ class BufferPool:
         size = c_uint()
         buf_ptr = self._lib.uring_buffer_pool_get(self._pool, index, byref(size))
         if not buf_ptr:
-            raise UringError(f"Invalid buffer index: {index}")
+            raise UringError(errno.EINVAL, "uring_buffer_pool_get", detail=f"invalid buffer index: {index}")
         return ctypes.string_at(buf_ptr, size.value)
 
     def get_ptr(self, index: int) -> Tuple[ctypes.c_void_p, int]:
@@ -58,7 +60,7 @@ class BufferPool:
         size = c_uint()
         buf_ptr = self._lib.uring_buffer_pool_get(self._pool, index, byref(size))
         if not buf_ptr:
-            raise UringError(f"Invalid buffer index: {index}")
+            raise UringError(errno.EINVAL, "uring_buffer_pool_get", detail=f"invalid buffer index: {index}")
         return (buf_ptr, int(size.value))
 
     def set_size(self, index: int, size: int) -> None:

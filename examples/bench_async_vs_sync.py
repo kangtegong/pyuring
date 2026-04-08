@@ -233,7 +233,7 @@ def benchmark_async_write(file_paths: List[Path], file_size_mb: int, qd: int, us
                 # Wait for completion
                 user_data_encoded, result = ctx.wait_completion()
                 if result < 0:
-                    raise UringError(f"Write failed: {result}")
+                    raise UringError(-int(result), "uring_wait_completion", detail="write completion")
                 
                 # Extract and close fd
                 fd = user_data_encoded >> 32
@@ -255,7 +255,7 @@ def benchmark_async_write(file_paths: List[Path], file_size_mb: int, qd: int, us
             while inflight > 0:
                 user_data_encoded, result = ctx.wait_completion()
                 if result < 0:
-                    raise UringError(f"Write failed: {result}")
+                    raise UringError(-int(result), "uring_wait_completion", detail="write completion")
                 
                 fd = user_data_encoded >> 32
                 os.fsync(fd)
@@ -297,7 +297,7 @@ def benchmark_async_read(file_paths: List[Path], file_size_mb: int, qd: int, use
                 # Wait for completion
                 user_data_encoded, result = ctx.wait_completion()
                 if result < 0:
-                    raise UringError(f"Read failed: {result}")
+                    raise UringError(-int(result), "uring_wait_completion", detail="read completion")
                 
                 # Extract and close fd
                 fd = user_data_encoded >> 32
@@ -319,7 +319,7 @@ def benchmark_async_read(file_paths: List[Path], file_size_mb: int, qd: int, use
             while inflight > 0:
                 user_data_encoded, result = ctx.wait_completion()
                 if result < 0:
-                    raise UringError(f"Read failed: {result}")
+                    raise UringError(-int(result), "uring_wait_completion", detail="read completion")
                 
                 fd = user_data_encoded >> 32
                 os.close(fd)

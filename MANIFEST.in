@@ -8,4 +8,6 @@ include scripts/cibw_before_all.sh
 
 recursive-include csrc *.c
 recursive-include pyuring *.py
+include pyuring/py.typed
+include pyuring/__init__.pyi
 recursive-include tests *.py
