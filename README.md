@@ -1,19 +1,12 @@
 # pyuring
 
-Code: [github.com/kangtegong/pyuring](https://github.com/kangtegong/pyuring)
+pyuring is a Python library for performing file I/O using the Linux [`io_uring`](https://kernel.dk/io_uring.pdf) kernel interface.
 
-Linux only. Python loads `liburingwrap.so` through `ctypes`. That library links [liburing](https://github.com/axboe/liburing) and uses the kernel io_uring interface. The package exposes file copy and bulk-write entry points, read/write operations on open file descriptors, and optional Python callbacks used by the native code when dynamic buffer sizing is enabled. **`UringCtx`** can also be created with **`io_uring` setup flags**, register **fixed file descriptors** and **fixed buffers** (for `READ_FIXED` / `WRITE_FIXED` with `IOSQE_FIXED_FILE`), and query the kernel for **opcode support** via the probe API (`io_uring_get_probe_ring`). The Python API does not cover all of liburing; additional logic resides in `csrc/`.
+`io_uring` submits I/O operations to the kernel through a shared-memory ring buffer instead of issuing individual system calls per operation. This reduces per-operation syscall overhead, which is especially noticeable in workloads with many small or concurrent I/O operations.
 
-**Layout:** `pyuring/` — Python package; `csrc/` — sources for `liburingwrap.so`; `Makefile` — builds that shared object; `third_party/liburing` — optional vendored liburing tree; `docs/` — **USAGE**, install guide, changelog, testing policy, benchmarks guide; `examples/` — benchmark scripts and `test_dynamic_buffer.py`; `tests/` — unit tests (ring flags, registration, probe).
+pyuring exposes `io_uring` to Python through a C shared library (`liburingwrap.so`, built on top of [liburing](https://github.com/axboe/liburing)) and `ctypes` bindings. You do not need to understand the ring buffer mechanics to use the high-level API — but if you want direct control over submission and completion queues, that is available too.
 
-**Needs:** Linux (docs assume kernel 5.15+), Python 3.8+, and a working toolchain plus liburing headers when you build from source.
-
-| More docs | |
-|-----------|--|
-| [docs/USAGE.md](docs/USAGE.md) | Full API tables and patterns |
-| [docs/INSTALLATION.md](docs/INSTALLATION.md) | Build and install |
-| [docs/SUPPORT.md](docs/SUPPORT.md) | Kernel / liburing / wheels / containers |
-| [docs/TESTING.md](docs/TESTING.md) | unittest vs pytest, coverage goals, mandatory test areas |
+**Requires:** Linux kernel 5.15+, Python 3.8+
 
 ## Install
 
@@ -21,131 +14,166 @@ Linux only. Python loads `liburingwrap.so` through `ctypes`. That library links 
 pip install pyuring
 ```
 
-On **glibc x86_64** Linux, PyPI may serve a **manylinux** wheel that bundles **`liburingwrap.so`** without a separate system liburing package; other platforms often install from **sdist** and compile against liburing (see [docs/INSTALLATION.md](docs/INSTALLATION.md)).
+On glibc x86\_64 Linux, pip installs a manylinux wheel that includes a pre-built `liburingwrap.so` — no separate liburing package is needed. For other platforms or source builds, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
-From git (submodule for liburing if you use it):
+## What pyuring provides
 
-```bash
-git clone --recursive https://github.com/kangtegong/pyuring.git
-cd pyuring
-pip install -e .
-```
+### High-level file I/O helpers
 
-Debian/Ubuntu: `liburing-dev`. Fedora/RHEL: `liburing-devel`. Arch: `liburing`. If installation fails, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
-
-## API reference (overview)
-
-The package loads native code from `liburingwrap.so`. Operations that fail in the C layer raise **`UringError`** (subclass of **`OSError`**); **`errno`** matches the kernel errno, and **`operation`** names the failing wrapper. See **[docs/USAGE.md](docs/USAGE.md)** for message format and recommended patterns.
-
-**Exports.** Public symbols are available from the package root (`from pyuring import copy, UringCtx, …`). The namespace object **`pyuring.direct`** exposes the same callables and types as attributes. **`pyuring.raw`** is a backward-compatible alias of **`pyuring.direct`**.
-
-Complete parameter lists, defaults, and per-method tables: **[docs/USAGE.md](docs/USAGE.md)**.
-
-### Orchestrated helpers
-
-These functions select queue depth and block size from **`mode`** (`"safe"` | `"fast"` | `"auto"`) before invoking the native implementation. Keyword-only arguments not shown below are listed in docs/USAGE.md.
-
-| Name | Signature (summary) | Return value |
-|------|---------------------|--------------|
-| **`copy`** | `copy(src_path, dst_path, *, mode="auto", qd=32, block_size=1<<20, fsync=False, buffer_size_cb=None)` | **`int`** — bytes copied. |
-| **`write`** | `write(dst_path, *, total_mb, mode="auto", qd=256, block_size=4096, fsync=False, dsync=False, buffer_size_cb=None)` | **`int`** — bytes written. |
-| **`write_many`** | `write_many(dir_path, *, nfiles, mb_per_file, mode="auto", qd=256, block_size=4096, fsync_end=False)` | **`int`** — total bytes written across files. |
-
-**Behavior.** For **`mode="auto"`**, **`copy`** and **`write`** use the dynamic-buffer native entry points (`copy_path_dynamic`, `write_newfile_dynamic`) with a built-in adaptive **`buffer_size_cb`** unless the caller supplies one. **`write_many`** always calls **`write_manyfiles`**; **`mode`** only adjusts **`qd`** and **`block_size`** presets.
-
-### Native pipeline functions
-
-These functions map directly to the shared library. They are importable at package level and as attributes of **`pyuring.direct`** / **`pyuring.raw`**.
-
-| Name | Signature (summary) | Return value |
-|------|---------------------|--------------|
-| **`copy_path`** | `copy_path(src_path, dst_path, *, qd=32, block_size=1<<20)` | **`int`** |
-| **`copy_path_dynamic`** | `copy_path_dynamic(src_path, dst_path, *, qd=32, block_size=1<<20, buffer_size_cb=None, fsync=False)` | **`int`** |
-| **`write_newfile`** | `write_newfile(dst_path, *, total_mb, block_size=4096, qd=256, fsync=False, dsync=False)` | **`int`** |
-| **`write_newfile_dynamic`** | `write_newfile_dynamic(dst_path, *, total_mb, block_size=4096, qd=256, fsync=False, dsync=False, buffer_size_cb=None)` | **`int`** |
-| **`write_manyfiles`** | `write_manyfiles(dir_path, *, nfiles, mb_per_file, block_size=4096, qd=256, fsync_end=False)` | **`int`** |
-
-Path arguments are **`str`**. Optional **`buffer_size_cb`** callbacks receive **`(current_offset, total_bytes, default_block_size)`** and return an **`int`** buffer size where documented in docs/USAGE.md.
-
-### Classes
-
-**`class UringCtx`**
-
-- **Construction:** `UringCtx(lib_path=None, entries=64, *, setup_flags=0, sq_thread_cpu=-1, sq_thread_idle=0)` — loads **`lib_path`**, or resolves **`liburingwrap.so`** automatically when **`lib_path`** is **`None`**. The native queue is created with **`io_uring_queue_init_params`**. **`setup_flags`** are `IORING_SETUP_*` bit masks (e.g. **`IORING_SETUP_SINGLE_ISSUER`**, **`IORING_SETUP_COOP_TASKRUN`**, **`IORING_SETUP_SQPOLL`**); **`sq_thread_cpu`** / **`sq_thread_idle`** apply when using SQPOLL-style tuning (see docs/USAGE.md).
-- **Synchronous I/O:** **`read`**, **`write`**, **`read_batch`**, **`read_offsets`** (see docs/USAGE.md for arguments and return types).
-- **Registered I/O (fixed fd / fixed buffers):** **`register_files`** / **`unregister_files`**, **`register_buffers`** / **`unregister_buffers`**, **`read_fixed`**, **`write_fixed`** — kernel-side registration for high-QD workloads; buffers must stay pinned (see docs/USAGE.md).
-- **Opcode probe:** **`probe_opcode_supported`**, **`probe_last_op`**, **`probe_supported_mask`** — reflect **`IORING_REGISTER_PROBE`** / `io_uring_get_probe_ring` (kernel-dependent).
-- **Constants:** package exports **`IORING_SETUP_*`** and **`IORING_OP_*`** for flags and opcode numbers (aligned with Linux UAPI).
-- **Asynchronous I/O:** **`read_async`**, **`write_async`**, **`read_async_ptr`**, **`write_async_ptr`**; completion polling via **`wait_completion`**, **`peek_completion`**; submission via **`submit`**, **`submit_and_wait`**.
-- **Resource management:** **`close()`**; supports **`with`** statement.
-
-**`class BufferPool`**
-
-- **Construction:** class method **`BufferPool.create(initial_count=8, initial_size=4096)`**.
-- **Instance methods:** **`resize`**, **`get`**, **`get_ptr`**, **`set_size`**, **`close`**; context manager supported.
-
-**`class UringError`**
-
-- Base: **`OSError`**. **`errno`** / **`operation`** / optional **`detail`**; see **[docs/USAGE.md](docs/USAGE.md)** (**Errors and messages**).
-
-### Other documentation
-
-- Installation and build: **[docs/INSTALLATION.md](docs/INSTALLATION.md)**  
-- Benchmarks: **[docs/BENCHMARKS.md](docs/BENCHMARKS.md)**  
-- asyncio: **[docs/USAGE.md](docs/USAGE.md)** (*asyncio*); **`from pyuring.aio import UringAsync`** (also **`from pyuring import UringAsync`**)
-
-## Quick examples
+The simplest way to use pyuring. `copy`, `write`, and `write_many` handle queue depth tuning, buffer management, and the io_uring pipeline internally.
 
 ```python
 import pyuring as iou
 
-iou.copy("/tmp/source.dat", "/tmp/dest.dat")
+# Copy a file
+iou.copy("/tmp/src.dat", "/tmp/dst.dat")
+
+# Write a new file (100 MiB of data)
 iou.write("/tmp/new.dat", total_mb=100)
+
+# Write multiple files into a directory
 iou.write_many("/tmp/out", nfiles=10, mb_per_file=100)
 ```
 
-Lower-level, same symbols as top-level imports:
+The `mode` parameter controls how queue depth and buffer size are tuned:
+
+| mode | Behavior |
+|------|----------|
+| `"auto"` (default) | Starts with the default block size and increases it as the operation progresses. Uses the dynamic buffer C path. |
+| `"safe"` | Conservative settings: queue depth capped at 16 (copy) or 128 (write), block size capped at 1 MiB (copy) or 4 KiB (write). |
+| `"fast"` | Aggressive settings: queue depth at least 64 (copy) or 256 (write), block size at least 1 MiB (copy) or 64 KiB (write). |
+
+You can track progress or cancel an operation cooperatively using `progress_cb`:
 
 ```python
+def on_progress(done_bytes, total_bytes):
+    print(f"{done_bytes} / {total_bytes} bytes")
+    return False  # return True to cancel (raises UringError with errno.ECANCELED)
+
+iou.copy("/tmp/src.dat", "/tmp/dst.dat", progress_cb=on_progress)
+```
+
+---
+
+### UringCtx — direct ring control
+
+`UringCtx` wraps a single `io_uring` instance. Use it when you need to submit and receive completions manually, register fixed file descriptors or buffers, or configure the ring with specific setup flags.
+
+```python
+import os
 import pyuring as iou
 
-iou.direct.copy_path("/tmp/a.dat", "/tmp/b.dat", qd=32, block_size=1 << 20)
+with iou.UringCtx(entries=64) as ctx:
+    fd = os.open("/tmp/data.bin", os.O_RDONLY)
 
-with iou.direct.UringCtx(entries=64) as ctx:
+    # Synchronous read (submits one SQE and waits for its CQE internally)
+    data = ctx.read(fd, length=4096, offset=0)
+
+    # Asynchronous: submit a read, then wait for its completion separately
+    buf = bytearray(4096)
+    ctx.read_async(fd, buf, offset=0, user_data=42)
+    ctx.submit()
+    user_data, result = ctx.wait_completion()
+    # result is the number of bytes read, or a negative errno on error
+```
+
+You can pass `IORING_SETUP_*` flags to tune the ring at creation time:
+
+```python
+ctx = iou.UringCtx(
+    entries=128,
+    setup_flags=iou.IORING_SETUP_SINGLE_ISSUER | iou.IORING_SETUP_COOP_TASKRUN,
+)
+```
+
+---
+
+### UringAsync — asyncio integration
+
+`UringAsync` integrates `UringCtx` with an `asyncio` event loop. It registers the ring's completion queue file descriptor (`ring_fd`) with the loop's reader, so `await ua.wait_completion()` returns as soon as a CQE is available — without blocking the event loop thread.
+
+```python
+import asyncio
+import pyuring as iou
+from pyuring import UringAsync
+
+async def main():
+    with iou.UringCtx(entries=64) as ctx:
+        async with UringAsync(ctx) as ua:
+            fd = os.open("/tmp/data.bin", os.O_RDONLY)
+            buf = bytearray(4096)
+            ctx.read_async(fd, buf, user_data=1)
+            ctx.submit()
+            user_data, result = await ua.wait_completion()
+
+asyncio.run(main())
+```
+
+---
+
+### BufferPool — native buffer management
+
+`BufferPool` allocates and manages a set of fixed-size buffers in native memory. Use it with `read_async` / `write_async` when you want to avoid Python object allocation per I/O operation.
+
+```python
+with iou.BufferPool.create(initial_count=8, initial_size=4096) as pool:
+    ptr, size = pool.get_ptr(0)  # raw pointer to buffer slot 0
+    ctx.read_async(fd, (ptr, size), user_data=0)
+    ctx.submit()
+    ctx.wait_completion()
+    data = pool.get(0)  # read the result as bytes
+```
+
+---
+
+### Kernel capability probe
+
+Before using a specific `io_uring` opcode, you can check at runtime whether the running kernel supports it. This is useful because opcode availability depends on the kernel version.
+
+```python
+from pyuring import opcode_supported, require_opcode_supported, IORING_OP_SPLICE
+
+# Returns True/False
+if iou.opcode_supported(iou.IORING_OP_SPLICE):
     ...
+
+# Raises UringError(errno.EOPNOTSUPP) if not supported
+require_opcode_supported(iou.IORING_OP_SPLICE, "my_splice_op")
 ```
 
-## Tests
+---
 
-Policy and mandatory areas: **[docs/TESTING.md](docs/TESTING.md)**. Default runner is **`unittest`**; **`pytest`** is optional.
+## Error handling
 
-After a local build:
+All errors from the native layer raise `UringError`, which is a subclass of `OSError`. It carries three fields:
 
-```bash
-make && python3 examples/test_dynamic_buffer.py
-PYTHONPATH=. python3 -m unittest discover -s tests -v
+| Field | Content |
+|-------|---------|
+| `errno` | The kernel errno value (same meaning as in `os` / `OSError`). |
+| `operation` | The name of the C wrapper function that failed (e.g. `"uring_copy_path"`). |
+| `detail` | An optional string with additional context, such as search paths when `liburingwrap.so` cannot be found. |
+
+```python
+import errno
+from pyuring import UringError
+
+try:
+    iou.copy("/tmp/src.dat", "/tmp/dst.dat")
+except UringError as e:
+    if e.errno == errno.ENOENT:
+        print("source file not found")
+    elif e.errno == errno.ECANCELED:
+        print("cancelled by progress callback")
+    print(f"failed in: {e.operation}")
 ```
 
-The **`tests/`** package covers probe helpers, optional setup flags (skipped if the kernel rejects a flag combination), fixed file/buffer registration, aio/cancel/timeout/peek regressions, and more—see **docs/TESTING.md**.
+---
 
-If you installed from PyPI and want to run those scripts from a checkout, run them from a directory that does **not** put the repo root on `PYTHONPATH` first—otherwise `import pyuring` can pick up the tree without a built `.so` and fail.
+## Further reading
 
-`pip install pyuring` was also verified in Docker (privileged, liburing development packages installed) on Ubuntu 22.04, Debian bookworm, and Fedora 40. Example scripts were run from a directory layout where `import pyuring` resolves to the installed package (not an unbuilt source tree on `PYTHONPATH`). `test_dynamic_buffer.py` completed successfully on all three.
-
-## Benchmark vs plain `os` read/write
-
-[`examples/bench_async_vs_sync.py`](examples/bench_async_vs_sync.py) measures wall-clock time for two implementations of the same workload (chunked read/write over the same files). One implementation uses `os.open`, `os.write`, and `os.read` in a synchronous loop. The other uses `UringCtx` and `BufferPool` with io_uring submission and completion. This benchmark does **not** compare against `asyncio` or `aiofiles`.
-
-With `--no-odirect`, I/O goes through the page cache (see script: `O_DIRECT` is disabled). The chart below reports total elapsed time (write phase plus read phase) for 8 files × 2 MiB, mean of three runs, in the Docker environments listed on the axes:
-
-```mermaid
-xychart-beta
-    title "Total time — pyuring vs sync os read/write (same script)"
-    x-axis ["Ubuntu 22.04", "Debian 12", "Fedora 40"]
-    y-axis "× faster" 1.2 --> 1.32
-    bar [1.25, 1.29, 1.24]
-```
-
-Throughput and speedup depend on CPU, storage, and kernel. To reproduce:
-
-`python3 examples/bench_async_vs_sync.py --num-files 8 --file-size-mb 2 --no-odirect --repeats 3`
+| Document | Contents |
+|----------|----------|
+| [docs/USAGE.md](docs/USAGE.md) | Full API reference for all classes and functions |
+| [docs/INSTALLATION.md](docs/INSTALLATION.md) | Build from source, liburing options, platform notes |
+| [docs/BENCHMARKS.md](docs/BENCHMARKS.md) | How to run the included benchmarks |
+| [docs/TESTING.md](docs/TESTING.md) | How to run the test suite |

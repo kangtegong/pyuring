@@ -1,246 +1,446 @@
-# pyuring — API specification
+# API Reference
 
-This document describes the public Python API of the [pyuring](https://github.com/kangtegong/pyuring) package. Symbols are loaded from **`liburingwrap.so`** (built from this repository’s C sources). Errors from the native layer raise **`UringError`**, a subclass of **`OSError`**: use **`exc.errno`** (and optionally **`exc.operation`**) for programmatic handling.
-
-## Errors and messages
-
-| Field / behavior | Meaning |
-|------------------|---------|
-| **`errno`** | Kernel-style errno (same meaning as in **`os`**, **`OSError`**). |
-| **`operation`** | Which ctypes wrapper failed (e.g. **`"uring_read_fixed_sync"`**, **`"uring_create_ex"`**). |
-| **`detail`** | Optional multi-line hint (e.g. search paths when **`liburingwrap.so`** is missing). |
-| **String form** | **`{operation}: {strerror}`**, plus **`detail`** when present. |
-
-## Recommended patterns
-
-- **Fixed files / buffers:** Keep FDs and mutable buffers (e.g. **`bytearray`**) alive for the whole time they are registered or used in-flight. Call **`unregister_files`** / **`unregister_buffers`** (or **`close()`** on **`UringCtx`**) when done.
-- **`UringCtx` threading:** Use a single instance from **one** Python thread (the creator) unless you pass **`single_thread_check=False`** and enforce mutual exclusion yourself. The default raises **`UringError`** if another thread calls into the context. For **`wait_completion_in_executor`**, build **`UringCtx(..., single_thread_check=False)`** so the worker thread can call **`wait_completion`**.
-- **After `UringCtx.close()`:** Any further use raises **`UringError`** with a clear “closed” **`detail`** (not a silent crash from ctypes).
-- **`BufferPool` / pinned memory:** Keep the **`BufferPool`** object alive while any SQE may still reference pool memory; do not **`close()`** the pool until in-flight ops using **`get_ptr`** / **`get`** are complete. After **`close()`**, methods raise **`UringError`**.
-- **Context managers:** Prefer **`with UringCtx(...) as ctx:`** and **`with BufferPool.create(...) as pool:`** so the ring and pool are torn down reliably.
-- **Branching on failure:** `except UringError as e:` then **`if e.errno == errno.EEXIST:`** (etc.), not string parsing.
-
-For supported kernels and the project testing policy, see **`docs/SUPPORT.md`** and **`docs/TESTING.md`** in the repository.
-
-## asyncio (`pyuring.aio`)
-
-Import: **`from pyuring.aio import UringAsync, wait_completion_in_executor`** (also re-exported from **`pyuring`**).
-
-| Symbol | Role |
-|--------|------|
-| **`UringCtx.ring_fd`** | Kernel fd for the completion queue; **`UringAsync`** registers it with **`asyncio.loop.add_reader`**. |
-| **`UringAsync(ctx)`** | **`async def wait_completion() -> (user_data, result)`** — same contract as **`UringCtx.wait_completion`**, integrated with the running event loop. First use pins the **current** **`asyncio`** loop; using another loop later raises **`RuntimeError`**. |
-| **`wait_completion_in_executor(ctx, executor=None)`** | **`loop.run_in_executor(executor, ctx.wait_completion)`** — thread-based; cancellation does not unblock a blocked worker thread. Use **`UringCtx(..., single_thread_check=False)`** so the executor thread may call **`wait_completion`**. |
-
-**Lifecycle**
-
-- Prefer **`async with UringAsync(ctx) as ua:`** or call **`ua.close()`** when done; that removes the reader and cancels pending **`wait_completion`** futures. It does **not** close **`ctx`**.
-- Do not **`close()`** the **`UringCtx`** while coroutines still **`await ua.wait_completion()`**; completions may still be delivered or errors may surface.
-
-**GIL, threads, buffers**
-
-- **`UringAsync`** and **`UringCtx`** are intended for **one thread** — the thread that runs the **`asyncio`** event loop. Do not share a **`UringCtx`** across threads.
-- **`read_async`** / **`write_async`** retain kernel references to buffer memory until the matching completion is returned; keep **`bytearray`** / **`BufferPool`** views alive until that **`await`**.
-
-## Naming
-
-| Concept | Description |
-|---------|-------------|
-| **Orchestrated helpers** | Module-level functions **`copy`**, **`write`**, **`write_many`** that forward to the direct bindings with **preset tuning** controlled by **`mode`**. |
-| **Direct bindings** | The ctypes-backed functions and classes: available at **package top level**, and grouped on **`pyuring.direct`** for qualified access. **`pyuring.raw`** is an alias of **`pyuring.direct`** (backward compatibility only). |
-
-Unless noted, numeric parameters are passed through to C; invalid combinations may raise **`UringError`** with a matching **`errno`** (see **Errors and messages** above).
+This document covers every public symbol in pyuring. All importable names are available both at the package root (`import pyuring as iou; iou.copy(...)`) and on the `pyuring.direct` namespace object (`iou.direct.copy_path(...)`). `pyuring.raw` is a backward-compatible alias for `pyuring.direct`.
 
 ---
 
-## Orchestrated helpers
+## Error handling
+
+Any failure in the native layer raises `UringError`, a subclass of `OSError`.
+
+```python
+import errno
+from pyuring import UringError
+
+try:
+    iou.copy("/tmp/src.dat", "/tmp/dst.dat")
+except UringError as e:
+    print(e.errno)      # int — kernel errno (e.g. errno.ENOENT)
+    print(e.operation)  # str — name of the failing C function
+    print(e.detail)     # str or None — extra hint (e.g. .so search paths)
+```
+
+`e.errno` matches the values in Python's `errno` module, so you can branch on `errno.ENOENT`, `errno.ECANCELED`, etc. Do not parse the string representation.
+
+---
+
+## High-level helpers
+
+These three functions are the recommended starting point. They handle queue depth, buffer sizing, and the io_uring pipeline internally. Import them from the package root.
 
 ### `copy`
 
-| Item | Specification |
-|------|-----------------|
-| **Signature** | `copy(..., *, sync_policy="default", progress_cb=None, ...)` — see full parameters below. |
-| **Return value** | Number of bytes copied (as reported by the native implementation). |
-| **`mode`** | `"safe"` — caps `qd` at 16 and `block_size` at 1 MiB. `"fast"` — raises `qd` to at least 64 and `block_size` to at least 1 MiB. `"auto"` — uses **`copy_path_dynamic`** with default adaptive **`buffer_size_cb`** unless **`buffer_size_cb`** is supplied. |
-| **`qd`** | Queue depth (tuned by **`mode`** before use). |
-| **`block_size`** | Default block size in bytes (tuned by **`mode`**). |
-| **`fsync`** | When **`sync_policy`** is **`"default"`**, passed through to the C pipeline (end **`fsync`** on the destination). |
-| **`sync_policy`** | **`"default"`** — use **`fsync`**. **`"none"`** — no end **`fsync`**. **`"end"`** — always end **`fsync`** (overrides **`fsync=False`**). |
-| **`buffer_size_cb`** | Optional `(offset, total_bytes, default_block_size) -> int`; **`mode="auto"`** or when **`progress_cb`** / non-default **`sync_policy`** forces the dynamic C path. |
-| **`progress_cb`** | Optional `(done_bytes, total_bytes) -> bool`. Invoked after each completed destination write; return **`True`** to stop cooperatively (**`UringError`**, **`errno.ECANCELED`**). May **`sleep`** for throttling. Not available on the minimal static path (no progress / default sync / **`mode`** other than **`auto`** without extras → uses **`copy_path`** only). |
+Copies a file from `src_path` to `dst_path` using an io_uring read→write pipeline in C. Returns the number of bytes copied.
 
-### `write`
+```python
+bytes_copied = iou.copy(
+    src_path,
+    dst_path,
+    *,
+    mode="auto",             # tuning preset: "auto" | "safe" | "fast"
+    qd=32,                   # queue depth (adjusted by mode)
+    block_size=1 << 20,      # default I/O block size in bytes (adjusted by mode)
+    fsync=False,             # fsync the destination file after all writes
+    sync_policy="default",   # overrides fsync when not "default" (see table below)
+    buffer_size_cb=None,     # optional callback to control block size per chunk
+    progress_cb=None,        # optional callback called after each completed write
+)
+```
 
-| Item | Specification |
-|------|-----------------|
-| **Signature** | `write(..., *, sync_policy="default", progress_cb=None, ...)` |
-| **Return value** | Bytes written (native report). |
-| **`mode`** | `"safe"` — caps `qd` at 128 and `block_size` at 4096. `"fast"` — `qd` at least 256, `block_size` at least 64 KiB. `"auto"` — **`write_newfile_dynamic`** with default adaptive callback unless **`buffer_size_cb`** is set. |
-| **`total_mb`** | Total size to write, in mebibytes (MiB). |
-| **`fsync` / `dsync`** | When **`sync_policy`** is **`"default"`**, passed to the underlying native write helpers. |
-| **`sync_policy`** | **`"default"`** — use **`fsync`** / **`dsync`**. **`"none"`** — neither end **`fsync`** nor **`RWF_DSYNC`**. **`"end"`** — end **`fsync`** only. **`"data"`** — **`RWF_DSYNC`** per write. **`"end_and_data"`** — both. |
-| **`buffer_size_cb`** | Same shape as for **`copy`**; used when **`mode=="auto"`** or when **`progress_cb`** / non-default **`sync_policy`** selects the dynamic path. |
-| **`progress_cb`** | Same contract as **`copy`**. |
+**`mode` behavior:**
 
-### `write_many`
+| mode | queue depth | block size | io path |
+|------|-------------|------------|---------|
+| `"auto"` | unchanged | starts at `block_size`, grows adaptively | `copy_path_dynamic` with built-in callback |
+| `"safe"` | capped at 16 | capped at 1 MiB | `copy_path` (static) or dynamic if extras used |
+| `"fast"` | minimum 64 | minimum 1 MiB | same as above |
 
-| Item | Specification |
-|------|-----------------|
-| **Signature** | `write_many(..., *, fsync_end=False, sync_policy="default", ...)` |
-| **Return value** | Total bytes written across files. |
-| **`mode`** | Adjusts **`qd`** and **`block_size`** like **`write`** (no separate dynamic path; always **`write_manyfiles`**). |
-| **`nfiles` / `mb_per_file`** | Count and per-file size in MiB. |
-| **`fsync_end`** | When **`sync_policy`** is **`"default"`**, passed as the native end-of-run fsync flag. |
-| **`sync_policy`** | Same **`"default"`** / **`"none"`** / **`"end"`** interpretation as **`copy`** for the end-fsync behaviour. |
+**`sync_policy` values:**
 
-### Kernel probe cache (opcode support)
+| sync_policy | Effect |
+|-------------|--------|
+| `"default"` | Uses the `fsync` boolean parameter. |
+| `"none"` | Never fsyncs, regardless of `fsync`. |
+| `"end"` | Always fsyncs at the end, regardless of `fsync`. |
 
-| Symbol | Role |
-|--------|------|
-| **`get_probe_info()`** | Returns **`IoUringProbeInfo`** (**`last_op`**, **`opcode_mask`**) using a short-lived **`UringCtx`**; result is cached for the process unless **`refresh=True`**. |
-| **`opcode_supported(opcode)`** | **`True`** if the cached mask reports the opcode. |
-| **`require_opcode_supported(opcode)`** | Raises **`UringError(EOPNOTSUPP, ...)`** with a detail line pointing at **`IO_URING_KERNEL_DOC`** if the opcode is missing. |
+**`buffer_size_cb`** — called before each read/write chunk to determine the buffer size:
+```python
+def my_cb(current_offset: int, total_bytes: int, default_block_size: int) -> int:
+    return default_block_size  # return any positive int
+```
 
-Constants **`IO_URING_KERNEL_DOC`** and **`LIBURING_PROJECT`** are stable URLs for error text and docs. **`UringCtx`** construction failure (**`uring_create_ex`**) includes the same links when **`io_uring_queue_init_params`** rejects the request.
+**`progress_cb`** — called after each completed destination write:
+```python
+def on_progress(done_bytes: int, total_bytes: int) -> bool:
+    print(f"{done_bytes}/{total_bytes}")
+    return False  # return True to cancel; raises UringError(errno.ECANCELED)
+```
 
 ---
 
-## Direct bindings — module-level functions
+### `write`
 
-These names are importable from `pyuring` and are also attributes of **`pyuring.direct`**.
+Creates a new file at `dst_path` and fills it with `total_mb` MiB of data. Returns the number of bytes written.
 
-### File pipeline (C-side io_uring)
+```python
+bytes_written = iou.write(
+    dst_path,
+    *,
+    total_mb,                    # size of the file to write, in MiB
+    mode="auto",
+    qd=256,
+    block_size=4096,
+    fsync=False,
+    dsync=False,                 # apply RWF_DSYNC per write (data integrity before return)
+    sync_policy="default",
+    buffer_size_cb=None,
+    progress_cb=None,
+)
+```
 
-| Function | Parameters (keyword-only after paths) | Returns | Notes |
-|----------|----------------------------------------|---------|--------|
-| **`copy_path`** | `qd=32`, `block_size=1<<20` | `int` | Copy **`src_path`** → **`dst_path`** in the native pipeline. |
-| **`copy_path_dynamic`** | `qd=32`, `block_size=1<<20`, `buffer_size_cb=None`, `fsync=False`, `progress_cb=None` | `int` | Per-chunk size from optional callback `(current_offset, total_bytes, default_block_size) -> int`. Optional **`progress_cb`**: `(done_bytes, total_bytes) -> bool` (return **`True`** to cancel with **`ECANCELED`**). |
-| **`write_newfile`** | `total_mb`, `block_size=4096`, `qd=256`, `fsync=False`, `dsync=False` | `int` | Create **`dst_path`** and fill with sequential writes in C. |
-| **`write_newfile_dynamic`** | Same as **`write_newfile`** plus `buffer_size_cb=None`, `progress_cb=None` | `int` | Dynamic per-write size via callback (same callback shape as **`copy_path_dynamic`**). Optional **`progress_cb`** as for **`copy_path_dynamic`**. |
-| **`write_manyfiles`** | `nfiles`, `mb_per_file`, `block_size=4096`, `qd=256`, `fsync_end=False` | `int` | Writes **`nfiles`** under **`dir_path`**. |
+**`mode` behavior** (write-specific thresholds):
 
-Path arguments are `str`; they are encoded for the native layer.
+| mode | queue depth | block size |
+|------|-------------|------------|
+| `"auto"` | unchanged | adaptive |
+| `"safe"` | capped at 128 | capped at 4 KiB |
+| `"fast"` | minimum 256 | minimum 64 KiB |
+
+**`sync_policy` values** (write adds `"data"` and `"end_and_data"` over copy):
+
+| sync_policy | fsync at end | RWF_DSYNC per write |
+|-------------|:------------:|:-------------------:|
+| `"default"` | from `fsync` param | from `dsync` param |
+| `"none"` | no | no |
+| `"end"` | yes | no |
+| `"data"` | no | yes |
+| `"end_and_data"` | yes | yes |
+
+---
+
+### `write_many`
+
+Writes `nfiles` files under `dir_path`, each `mb_per_file` MiB in size. Returns the total number of bytes written across all files.
+
+```python
+total_bytes = iou.write_many(
+    dir_path,
+    *,
+    nfiles,
+    mb_per_file,
+    mode="auto",
+    qd=256,
+    block_size=4096,
+    fsync_end=False,         # fsync each file after its final write
+    sync_policy="default",   # "default" / "none" / "end" (same as copy)
+)
+```
+
+`mode` adjusts `qd` and `block_size` with the same thresholds as `write`. There is no dynamic buffer path for `write_many`; it always uses `write_manyfiles` internally.
+
+---
+
+## Native pipeline functions
+
+These functions call the C pipeline directly with no preset tuning. Use them when you want precise control over queue depth and block size. They are available at the package root and on `pyuring.direct`.
+
+| Function | Key parameters | Returns | Notes |
+|----------|----------------|---------|-------|
+| `copy_path(src, dst)` | `qd=32`, `block_size=1<<20` | `int` bytes copied | Fixed block size throughout. |
+| `copy_path_dynamic(src, dst)` | `qd=32`, `block_size=1<<20`, `buffer_size_cb=None`, `fsync=False`, `progress_cb=None` | `int` | Block size per chunk from callback if provided. |
+| `write_newfile(dst)` | `total_mb`, `block_size=4096`, `qd=256`, `fsync=False`, `dsync=False` | `int` bytes written | Fixed block size. |
+| `write_newfile_dynamic(dst)` | same as above + `buffer_size_cb=None`, `progress_cb=None` | `int` | Dynamic block size via callback. |
+| `write_manyfiles(dir)` | `nfiles`, `mb_per_file`, `block_size=4096`, `qd=256`, `fsync_end=False` | `int` total bytes | Writes `nfiles` sequentially. |
+
+All path arguments are `str`. Callback signatures are the same as documented under `copy` above.
 
 ---
 
 ## `UringCtx`
 
-Context manager wrapping one **`io_uring`** instance from the native library. The native side uses **`io_uring_queue_init_params`** (not only the zero-flags **`io_uring_queue_init`** path).
+`UringCtx` wraps one `io_uring` instance. It uses `io_uring_queue_init_params` internally, which means you can pass any `IORING_SETUP_*` flag combination supported by the kernel.
+
+**Threading:** A single `UringCtx` is not thread-safe. By default (`single_thread_check=True`), calling any method from a thread other than the one that created the context raises `UringError`. If you need a worker thread to call `wait_completion` (e.g. via `wait_completion_in_executor`), construct with `single_thread_check=False` and ensure exclusive access yourself.
+
+**Lifecycle:** After `close()`, every method raises `UringError` with `detail="closed"`. Use a `with` statement to ensure cleanup.
 
 ### Constructor
 
-| Parameter | Default | Meaning |
-|-----------|---------|---------|
-| **`lib_path`** | `None` | If `None`, resolves **`liburingwrap.so`** (package `lib/`, then repo `build/`, then system). |
-| **`entries`** | `64` | Submission queue size hint. |
-| **`setup_flags`** | `0` | Bit mask of **`IORING_SETUP_*`** flags (see **Exported constants** below). Passed to **`io_uring_params.flags`**. |
-| **`sq_thread_cpu`** | `-1` | If `>= 0`, passed as **`sq_thread_cpu`** when relevant (e.g. with **`IORING_SETUP_SQPOLL`** / **`IORING_SETUP_SQ_AFF`**). |
-| **`sq_thread_idle`** | `0` | Milliseconds for SQPOLL idle behaviour when applicable; non-zero or SQPOLL may set **`sq_thread_idle`**. |
-| **`single_thread_check`** | `True` | If **`True`**, operations from a thread other than the constructor thread raise **`UringError`**. Set **`False`** only if you serialize access (e.g. **`wait_completion_in_executor`**). |
+```python
+UringCtx(
+    lib_path=None,            # path to liburingwrap.so; None = auto-discover
+    entries=64,               # submission queue size hint passed to the kernel
+    setup_flags=0,            # bitwise OR of IORING_SETUP_* constants
+    sq_thread_cpu=-1,         # pin SQPOLL kernel thread to this CPU (-1 = don't pin)
+    sq_thread_idle=0,         # SQPOLL idle timeout in milliseconds
+    single_thread_check=True, # raise UringError if called from another thread
+)
+```
 
-Some flag combinations require a recent kernel or extra privileges (e.g. **`IORING_SETUP_SQPOLL`**). Unsupported combinations fail at construction with **`UringError`**.
+When `lib_path=None`, the library is searched in this order: `pyuring/lib/`, `build/` (repo root), then the system linker path.
 
-### Exported constants (package level)
+**Commonly used setup flags:**
 
-Opcode and setup values match the Linux UAPI (`linux/io_uring.h`). Useful with **`probe_opcode_supported`** and **`UringCtx(..., setup_flags=...)`**.
+| Flag | Purpose |
+|------|---------|
+| `IORING_SETUP_SINGLE_ISSUER` | Tells the kernel that only one thread submits SQEs. Enables internal optimizations. |
+| `IORING_SETUP_COOP_TASKRUN` | Processes completions cooperatively rather than via interrupt. Reduces latency in single-threaded loops. |
+| `IORING_SETUP_DEFER_TASKRUN` | Defers task work until you explicitly call into the ring. Useful with SINGLE_ISSUER. |
+| `IORING_SETUP_SQPOLL` | Spawns a kernel polling thread that drains the SQ without needing a syscall per submit. Requires elevated privileges or `CAP_SYS_ADMIN` on older kernels. |
+| `IORING_SETUP_IOPOLL` | Polls for completions instead of using interrupts. Only works with O_DIRECT on supported storage. |
 
-| Names (examples) | Role |
-|--------------------|------|
-| **`IORING_SETUP_IOPOLL`**, **`IORING_SETUP_SQPOLL`**, **`IORING_SETUP_SQ_AFF`**, **`IORING_SETUP_COOP_TASKRUN`**, **`IORING_SETUP_SINGLE_ISSUER`**, **`IORING_SETUP_DEFER_TASKRUN`**, … | Ring creation flags. |
-| **`IORING_OP_NOP`**, **`IORING_OP_READ`**, **`IORING_OP_WRITE`**, **`IORING_OP_READ_FIXED`**, **`IORING_OP_WRITE_FIXED`**, **`IORING_OP_READV`**, **`IORING_OP_WRITEV`**, … | Opcode numbers for probing. |
+If a flag combination is rejected by the kernel, the constructor raises `UringError`. The `detail` field includes the liburing and kernel documentation URLs.
 
-The full set is defined in **`pyuring._native`** and re-exported from **`pyuring`**.
+### Synchronous I/O methods
 
-### Synchronous methods
+These methods submit one SQE and wait for its CQE before returning. They are a convenient way to run single operations without managing the submission/completion cycle manually.
 
-| Method | Arguments | Returns | Meaning |
-|--------|-----------|---------|---------|
-| **`read`** | `fd`, `length`, `offset=0` | `bytes` | Single read at **`offset`**. |
-| **`write`** | `fd`, `data` (bytes-like), `offset=0` | `int` | Bytes written count. |
-| **`read_batch`** | `fd`, `block_size`, `blocks`, `offset=0` | `bytes` | Contiguous read of **`blocks`** × **`block_size`** bytes. |
-| **`read_offsets`** | `fd`, `block_size`, `offsets`, `offset_bytes=True` | `bytes` | One block per entry in **`offsets`**; offsets are byte offsets if **`offset_bytes`**, else block indices. |
+| Method | Signature | Returns |
+|--------|-----------|---------|
+| `read` | `read(fd, length, offset=0)` | `bytes` containing the data read |
+| `write` | `write(fd, data, offset=0)` | `int` number of bytes written |
+| `read_batch` | `read_batch(fd, block_size, blocks, offset=0)` | `bytes` — `blocks × block_size` bytes read contiguously |
+| `read_offsets` | `read_offsets(fd, block_size, offsets, offset_bytes=True)` | `bytes` — one block per entry in `offsets`; entries are byte offsets if `offset_bytes=True`, block indices otherwise |
 
-### Registered files and buffers (kernel registration)
+`UringCtx` also exposes synchronous wrappers for a wide range of other io_uring operations: `openat`, `close`, `fsync`, `fallocate`, `statx`, `renameat`, `unlinkat`, `mkdirat`, `send`, `recv`, `accept`, `connect`, `splice`, `tee`, `poll_add`, `symlinkat`, `linkat`, `fadvise`, `madvise`, `getxattr`, `setxattr`, `epoll_ctl`, `socket`, `pipe`, `bind`, `listen`, `openat2`, `ftruncate`, `futex_wait`, `futex_wake`, and more. Each follows the same pattern: submit one operation and wait for its result.
 
-These map to **`io_uring_register_files`**, **`io_uring_register_buffers`**, and fixed **`READ_FIXED`** / **`WRITE_FIXED`** submissions with **`IOSQE_FIXED_FILE`**. Intended for workloads that reuse the same FDs and memory regions at high queue depth.
+### Asynchronous I/O methods
 
-| Method | Arguments | Returns | Meaning |
-|--------|-----------|---------|---------|
-| **`register_files`** | `fds` — non-empty sequence of `int` | — | Registers open file descriptors; use index **`0 .. len(fds)-1`** as the file slot in **`read_fixed`** / **`write_fixed`**. |
-| **`unregister_files`** | — | — | **`io_uring_unregister_files`**. |
-| **`register_buffers`** | `buffers` — non-empty sequence of **writable** contiguous buffers (e.g. **`bytearray`**) | — | Each element becomes a registered buffer index **`0 .. n-1`**. **`bytes`** is rejected (must be mutable). The implementation pins memory via **`ctypes`**; keep those objects alive while registered (the context holds internal references). |
-| **`unregister_buffers`** | — | — | **`io_uring_unregister_buffers`**; clears pinned references. |
-| **`read_fixed`** | `file_index`, `buf` (**`bytearray`**), `offset`, `buf_index` | `int` | Bytes read into **`buf`** using registered file **`file_index`** and registered buffer **`buf_index`**. |
-| **`write_fixed`** | `file_index`, `data` (**`bytearray`**), `offset`, `buf_index` | `int` | Writes from the same memory region that was registered at **`buf_index`** (typical pattern: fill the registered buffer, then submit). |
+Use these when you want to submit multiple operations and collect completions in a batch, or when integrating with `asyncio` via `UringAsync`.
 
-### Opcode probe
+**Submission:**
 
-| Method | Arguments | Returns | Meaning |
-|--------|-----------|---------|---------|
-| **`probe_opcode_supported`** | `opcode` (`int`) | `bool` | **`True`** if the kernel reports the opcode as supported (via **`io_uring_get_probe_ring`** / probe ops). |
-| **`probe_last_op`** | — | `int` | Highest opcode index described by the probe (**`io_uring_probe.last_op`**). |
-| **`probe_supported_mask`** | — | `bytes` | Length **`probe_last_op() + 1`**; byte **`i`** is **`1`** if opcode **`i`** is supported, else **`0`**. |
+```python
+# Submit a read into a bytearray or (ptr, size) tuple from BufferPool
+ctx.read_async(fd, buf, offset=0, user_data=0)
 
-### Asynchronous methods
+# Submit a write from a bytes-like object
+ctx.write_async(fd, data, offset=0, user_data=0)
 
-| Method | Arguments | Returns / behavior |
-|--------|-----------|---------------------|
-| **`read_async`** | `fd`, `buf`, `offset=0`, `user_data=0` | Submits read; **`buf`** may be `bytes`/`bytearray` or `(ptr, size)` tuple from **`BufferPool.get_ptr`**. |
-| **`read_async_ptr`** | `fd`, `buf_ptr`, `buf_len`, `offset=0`, `user_data=0` | Submits read using a raw address / `c_void_p`. |
-| **`write_async`** | `fd`, `data`, `offset=0`, `user_data=0` | Submits write for bytes-like **`data`**. |
-| **`write_async_ptr`** | `fd`, `buf_ptr`, `buf_len`, `offset=0`, `user_data=0` | Submits write from raw buffer. |
-| **`wait_completion`** | — | `(user_data: int, result: int)` blocking. |
-| **`peek_completion`** | — | Same tuple or `None` if none ready. |
-| **`submit`** | — | `int` — number of operations submitted (or native success code per binding). |
-| **`submit_and_wait`** | `wait_nr=1` | `int` — submit/wait combined (native semantics). |
+# Submit using a raw pointer (from BufferPool.get_ptr or ctypes allocation)
+ctx.read_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)
+ctx.write_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)
+```
 
-### Lifecycle
+`user_data` is an arbitrary integer you assign at submission time. It is returned unchanged in the completion, so you can correlate completions with submissions.
 
-| Method | Meaning |
-|--------|---------|
-| **`close()`** | Destroys the ring; safe if already closed. |
-| **`__enter__` / `__exit__`** | Context manager: **`close()`** on exit. |
+**Flushing the submission queue:**
+
+```python
+ctx.submit()                   # flush the SQ; returns number of operations submitted
+ctx.submit_and_wait(wait_nr=1) # flush the SQ and block until wait_nr CQEs are available
+```
+
+**Collecting completions:**
+
+```python
+user_data, result = ctx.wait_completion()  # blocks until one CQE is available
+pair = ctx.peek_completion()               # returns (user_data, result) or None immediately
+```
+
+`result` is the return value of the underlying operation: positive means success (e.g. bytes read/written), negative means a kernel errno (e.g. `-errno.ENOENT`).
+
+### Fixed file and buffer registration
+
+Registering file descriptors and buffers with the kernel avoids repeated fd table lookups and buffer pinning on each operation. This matters at high queue depth or in tight loops.
+
+```python
+# Register a list of open file descriptors.
+# After this, use the list index (0, 1, 2, ...) as file_index in read_fixed/write_fixed.
+fds = [os.open("/tmp/a.bin", os.O_RDONLY), os.open("/tmp/b.bin", os.O_RDONLY)]
+ctx.register_files(fds)
+
+# Register a list of writable buffers (bytearray or similar mutable contiguous objects).
+# bytes is not accepted because it is immutable.
+# After this, use the list index as buf_index in read_fixed/write_fixed.
+bufs = [bytearray(4096), bytearray(4096)]
+ctx.register_buffers(bufs)
+
+# Read using registered fd index 0 and registered buffer index 0
+bytes_read = ctx.read_fixed(file_index=0, buf=bufs[0], offset=0, buf_index=0)
+
+# Write from registered buffer index 1 using registered fd index 1
+bytes_written = ctx.write_fixed(file_index=1, data=bufs[1], offset=0, buf_index=1)
+
+# Unregister when done
+ctx.unregister_files()
+ctx.unregister_buffers()
+```
+
+Keep the registered `fds` open and the `bufs` objects alive for the entire duration of registration. `UringCtx` holds internal references to registered buffers; `unregister_buffers()` releases them.
+
+### Opcode probe methods
+
+Query the kernel for which io_uring opcodes are supported. Useful before using features that were added in later kernel versions.
+
+```python
+ctx.probe_opcode_supported(iou.IORING_OP_SPLICE)  # True or False
+ctx.probe_last_op()                                # highest opcode index in the probe
+ctx.probe_supported_mask()                         # bytes object; byte i is 1 if opcode i is supported
+```
+
+### Properties and lifecycle
+
+```python
+ctx.ring_fd    # int — the io_uring completion queue file descriptor (used by UringAsync)
+
+ctx.close()    # destroy the ring; safe to call multiple times
+# context manager — close() is called automatically on __exit__
+with UringCtx(entries=64) as ctx:
+    ...
+```
+
+---
+
+## `UringAsync`
+
+`UringAsync` bridges `UringCtx` and `asyncio`. It registers `ctx.ring_fd` with `asyncio.loop.add_reader`. When the kernel signals that a CQE is ready, the reader callback fires and resolves the waiting future — without blocking the event loop thread on a syscall.
+
+**One loop per instance:** The first call to `wait_completion()` records the running event loop. Subsequent calls must run on the same loop; calling from a different loop raises `RuntimeError`.
+
+**Threading:** `UringAsync` is designed for use from the single thread running the event loop. Do not share a `UringCtx` across threads.
+
+```python
+from pyuring import UringAsync
+
+async def main():
+    with iou.UringCtx(entries=64) as ctx:
+        async with UringAsync(ctx) as ua:
+            fd = os.open("/tmp/data.bin", os.O_RDONLY)
+            buf = bytearray(4096)
+
+            ctx.read_async(fd, buf, user_data=1)
+            ctx.submit()
+
+            user_data, result = await ua.wait_completion()
+            # result is bytes read, or negative errno
+
+asyncio.run(main())
+```
+
+**Cancellation:** If the coroutine is cancelled while awaiting `wait_completion()`, the future is removed from the internal queue and the event loop reader is removed if no other waiters remain. The in-flight kernel operation is not cancelled — its CQE will be silently discarded when it arrives.
+
+**Lifecycle:**
+- `ua.close()` removes the loop reader and cancels all pending `wait_completion` futures.
+- `close()` does **not** call `ctx.close()`. The `UringCtx` remains open.
+- Prefer `async with UringAsync(ctx) as ua:` to ensure cleanup.
+
+**Alternative — thread executor:**
+
+If you cannot use the event loop reader (e.g. in a context where `ring_fd` cannot be watched), run the blocking `wait_completion` in a thread pool:
+
+```python
+from pyuring import wait_completion_in_executor
+
+# UringCtx must be created with single_thread_check=False because
+# the executor runs wait_completion on a different thread.
+ctx = iou.UringCtx(entries=64, single_thread_check=False)
+user_data, result = await wait_completion_in_executor(ctx)
+```
+
+Cancellation via task cancellation only cancels the outer coroutine; the worker thread may remain blocked until a CQE arrives.
 
 ---
 
 ## `BufferPool`
 
-Fixed pool of buffers allocated in native code; use with **`read_async`** / **`write_async`** via **`get_ptr`**.
+`BufferPool` manages a fixed array of native memory buffers. Each slot has an index (0-based) and a size. Use `get_ptr` to get a raw pointer for `read_async` / `write_async`, avoiding Python object allocation per operation.
 
-### Construction
+**Lifetime:** Keep the `BufferPool` alive as long as any in-flight io_uring operation references its memory. Do not call `close()` until all operations using `get_ptr` pointers have completed. After `close()`, all methods raise `UringError`.
 
-| Call | Meaning |
-|------|---------|
-| **`BufferPool.create(initial_count=8, initial_size=4096)`** | Class method; returns a **`BufferPool`** instance. |
+```python
+with iou.BufferPool.create(initial_count=8, initial_size=4096) as pool:
+    # Get the raw pointer and size for slot 0
+    ptr, size = pool.get_ptr(0)
 
-### Methods
+    # Submit a read that will write directly into the native buffer
+    ctx.read_async(fd, (ptr, size), user_data=0)
+    ctx.submit()
+    ctx.wait_completion()
 
-| Method | Arguments | Returns / meaning |
-|--------|-----------|-------------------|
-| **`resize`** | `index`, `new_size` | Resize slot **`index`**. |
-| **`get`** | `index` | `bytes` copy of buffer **`index`**. |
-| **`get_ptr`** | `index` | `(c_void_p, length)` for zero-copy style use with **`read_async`**. |
-| **`set_size`** | `index`, `size` | Logical size without exceeding capacity. |
-| **`close`** | — | Frees the pool. |
-| **`__enter__` / `__exit__`** | — | Context manager. |
+    # Read the result back as a Python bytes object
+    data = pool.get(0)
 
----
-
-## Exceptions
-
-| Type | When |
-|------|------|
-| **`UringError`** | Subclass of **`OSError`**. Native call failed (e.g. queue init, I/O). **`errno`** is set; **`operation`** names the wrapper; see **Errors and messages** at the top of this file. |
-
----
-
-## Install from source (reference)
-
-```bash
-git clone --recursive https://github.com/kangtegong/pyuring.git
-cd pyuring
-git submodule update --init --recursive
-pip install -e .
+    # Resize slot 0 to hold larger data
+    pool.resize(0, 8192)
 ```
 
-See **[INSTALLATION.md](INSTALLATION.md)** for header packages, vendored builds, and troubleshooting.
+| Method | Signature | Description |
+|--------|-----------|-------------|
+| `BufferPool.create` | `create(initial_count=8, initial_size=4096)` | Class method. Allocates `initial_count` slots, each `initial_size` bytes. |
+| `get` | `get(index) -> bytes` | Returns a copy of the buffer contents as `bytes`. |
+| `get_ptr` | `get_ptr(index) -> (c_void_p, int)` | Returns the raw pointer and current size of the slot. Pass this tuple directly to `read_async` or `write_async`. |
+| `resize` | `resize(index, new_size)` | Reallocates slot `index` to `new_size` bytes. Invalidates any pointer previously returned by `get_ptr` for that slot. |
+| `set_size` | `set_size(index, size)` | Changes the logical size without reallocating. `size` must not exceed the current capacity. |
+| `close` | `close()` | Frees all native memory. |
+
+---
+
+## Kernel capability probe (module-level)
+
+The module-level probe helpers open a short-lived `UringCtx(entries=8)` on the first call and cache the result for the process lifetime.
+
+```python
+from pyuring import get_probe_info, opcode_supported, require_opcode_supported
+
+# IoUringProbeInfo(last_op=int, opcode_mask=bytes)
+# opcode_mask[i] == 1 means opcode i is supported
+info = iou.get_probe_info()
+
+# Check a single opcode
+if iou.opcode_supported(iou.IORING_OP_SPLICE):
+    # use splice
+
+# Raise UringError(errno.EOPNOTSUPP) if not supported.
+# The error detail includes links to the kernel io_uring documentation.
+iou.require_opcode_supported(iou.IORING_OP_SPLICE, "my_function")
+
+# Force re-probe (e.g. after a kernel upgrade without restarting the process)
+info = iou.get_probe_info(refresh=True)
+```
+
+---
+
+## Constants
+
+All `IORING_SETUP_*`, `IORING_OP_*`, and `IOSQE_*` constants are exported from the package root. Values match Linux UAPI (`linux/io_uring.h`).
+
+```python
+import pyuring as iou
+
+# Ring setup flags (pass to UringCtx setup_flags)
+iou.IORING_SETUP_IOPOLL
+iou.IORING_SETUP_SQPOLL
+iou.IORING_SETUP_SQ_AFF
+iou.IORING_SETUP_CQSIZE
+iou.IORING_SETUP_SINGLE_ISSUER
+iou.IORING_SETUP_COOP_TASKRUN
+iou.IORING_SETUP_DEFER_TASKRUN
+# ... and more
+
+# SQE flags (IOSQE_*)
+iou.IOSQE_FIXED_FILE       # use registered file index instead of fd
+iou.IOSQE_IO_DRAIN         # wait for all preceding SQEs to complete before this one
+iou.IOSQE_IO_LINK          # link this SQE to the next; if this fails, cancel the next
+iou.IOSQE_IO_HARDLINK      # like IO_LINK but the next SQE runs even if this one fails
+iou.IOSQE_ASYNC            # always execute this operation asynchronously
+iou.IOSQE_CQE_SKIP_SUCCESS # suppress CQE on success (still produces CQE on error)
+
+# Opcode numbers (pass to probe_opcode_supported, opcode_supported, etc.)
+iou.IORING_OP_NOP
+iou.IORING_OP_READ
+iou.IORING_OP_WRITE
+iou.IORING_OP_READ_FIXED
+iou.IORING_OP_WRITE_FIXED
+iou.IORING_OP_SPLICE
+iou.IORING_OP_TEE
+iou.IORING_OP_SEND
+iou.IORING_OP_RECV
+iou.IORING_OP_SEND_ZC
+# ... full list: iou.UAPI_CONSTANT_NAMES
+```
+
+To see all exported constant names:
+```python
+print(iou.UAPI_CONSTANT_NAMES)
+```
