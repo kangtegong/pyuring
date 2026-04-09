@@ -2,8 +2,8 @@
 """
 Regenerate docs/graphs/*.svg for examples/README.
 
-Only workloads where pyuring beats (or ties) "before" are emitted — if a
-scenario fails that check, adjust sizes/counts in this file and re-run:
+Tune SHARDS / SHARD_KB / URING_BATCH / etc. if you need different bars or
+hardware-specific behaviour, then re-run:
 
     PYTHONPATH=. python3 scripts/gen_example_graphs.py
 """
