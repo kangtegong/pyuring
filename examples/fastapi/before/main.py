@@ -15,7 +15,7 @@ from typing import Dict, Union
 
 from fastapi import FastAPI
 
-# Large enough for throughput benchmarks; graphs/bench_charts.py uses TestClient.
+# Large enough that one GET /payload is dominated by file read, not tiny-buffer noise.
 _PAYLOAD_BYTES = 32 * 1024 * 1024
 
 

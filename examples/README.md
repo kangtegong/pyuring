@@ -33,25 +33,19 @@ Each folder is the same scenario twice: **`before/`** uses a common Python patte
 
 **Compared:** Total time to read the whole shard set (throughput = sum of file sizes ÷ time). Batching many reads through one ring is the usual win here versus per-file threads.
 
-## Results
+## Charts
 
-Regenerate after changing code or hardware:
-
-```bash
-PYTHONPATH=. python3 examples/graphs/bench_charts.py
-```
-
-Y-axis is always **MiB/s** (effective: bytes read ÷ wall time). **before** / **pyuring** on the x-axis.
+Y-axis is **MiB/s** (bytes read ÷ wall time). X-axis is **before** / **pyuring**. SVGs live under **`docs/graphs/`** (snapshots from one machine; edit the files if you refresh numbers).
 
 | File | Matches |
 |------|---------|
-| [`graphs/asyncio_read_mib_s.svg`](graphs/asyncio_read_mib_s.svg) | `examples/asyncio/` — one **32 MiB** file, same pattern as `before/read_file.py` vs `after/read_file.py`. |
-| [`graphs/fastapi_payload_mib_s.svg`](graphs/fastapi_payload_mib_s.svg) | `examples/fastapi/` — **Starlette `TestClient`** `GET /payload` (full request), **32 MiB** file on disk. |
-| [`graphs/pytorch_shards_mib_s.svg`](graphs/pytorch_shards_mib_s.svg) | `examples/pytorch/` — **128 × 64 KiB** shards, thread pool vs batched `read_async`. |
+| [`docs/graphs/asyncio_read_mib_s.svg`](../docs/graphs/asyncio_read_mib_s.svg) | `examples/asyncio/` — one **32 MiB** file, same pattern as `before/read_file.py` vs `after/read_file.py`. |
+| [`docs/graphs/fastapi_payload_mib_s.svg`](../docs/graphs/fastapi_payload_mib_s.svg) | `examples/fastapi/` — **Starlette `TestClient`** `GET /payload` (full request), **32 MiB** file on disk. |
+| [`docs/graphs/pytorch_shards_mib_s.svg`](../docs/graphs/pytorch_shards_mib_s.svg) | `examples/pytorch/` — **128 × 64 KiB** shards, thread pool vs batched `read_async`. |
 
-![asyncio](graphs/asyncio_read_mib_s.svg)
-![fastapi](graphs/fastapi_payload_mib_s.svg)
-![pytorch](graphs/pytorch_shards_mib_s.svg)
+![asyncio](../docs/graphs/asyncio_read_mib_s.svg)
+![fastapi](../docs/graphs/fastapi_payload_mib_s.svg)
+![pytorch](../docs/graphs/pytorch_shards_mib_s.svg)
 
 On a warm page cache, **asyncio** / **fastapi** “before” paths can look faster in MiB/s than a multi-completion **pyuring** read on a single request; **pytorch**-style many-file reads are where batching usually wins. Treat the numbers as this machine, this run.
 
@@ -70,4 +64,4 @@ python3 examples/pytorch/before/load_shards.py
 python3 examples/pytorch/after/load_shards.py
 ```
 
-More: [`graphs/`](graphs/), [`docs/`](../docs/).
+More: [`docs/graphs/`](../docs/graphs/), [`docs/`](../docs/).
