@@ -1,5 +1,8 @@
 # pyuring
 
+[![PyPI](https://img.shields.io/pypi/v/pyuring.svg)](https://pypi.org/project/pyuring/)
+[![CI](https://github.com/kangtegong/pyuring/actions/workflows/ci.yml/badge.svg)](https://github.com/kangtegong/pyuring/actions/workflows/ci.yml)
+
 pyuring is a Python library for performing file I/O using the Linux [`io_uring`](https://kernel.dk/io_uring.pdf) kernel interface.
 
 `io_uring` submits I/O operations to the kernel through a shared-memory ring buffer instead of issuing individual system calls per operation. This reduces per-operation syscall overhead, which is especially noticeable in workloads with many small or concurrent I/O operations.
