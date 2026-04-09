@@ -1,4 +1,6 @@
 include README.md
+include mkdocs.yml
+include requirements-docs.txt
 recursive-include docs *.md
 recursive-include docs/graphs *.svg
 include LICENSE

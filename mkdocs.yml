@@ -1,0 +1,60 @@
+# MkDocs — built by GitHub Actions and deployed to GitHub Pages.
+# Local: pip install mkdocs-material && mkdocs serve
+
+site_name: pyuring
+site_description: Python io_uring bindings for Linux
+site_url: https://kangtegong.github.io/pyuring/
+
+repo_name: kangtegong/pyuring
+repo_url: https://github.com/kangtegong/pyuring
+edit_uri: edit/main/docs/
+
+docs_dir: docs
+site_dir: site
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+    - scheme: slate
+      primary: indigo
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+  features:
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - search.suggest
+    - search.highlight
+
+markdown_extensions:
+  - tables
+  - toc:
+      permalink: true
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.superfences
+
+plugins:
+  - search
+
+nav:
+  - Home: index.md
+  - Installation: INSTALLATION.md
+  - API reference: USAGE.md
+  - Benchmarks: BENCHMARKS.md
+  - Example charts: graphs/index.md
+  - Testing: TESTING.md
+  - Support: SUPPORT.md
+  - Changelog: CHANGELOG.md
+
+extra:
+  social:
+    - icon: fontawesome/brands/github
+      link: https://github.com/kangtegong/pyuring

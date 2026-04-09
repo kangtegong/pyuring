@@ -6,6 +6,9 @@ wheelhouse/
 *.o
 *.d
 
+# MkDocs (GitHub Pages build output)
+site/
+
 # Python package build
 pyuring/lib/liburingwrap.so
 dist/

@@ -1,0 +1,2 @@
+# Optional: build the documentation site locally (see mkdocs.yml)
+mkdocs-material>=9.5

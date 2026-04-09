@@ -87,11 +87,12 @@ setup(
     license="MIT",
     project_urls={
         "Source": "https://github.com/kangtegong/pyuring",
-        "Documentation": "https://github.com/kangtegong/pyuring/blob/main/README.md",
-        "API reference (USAGE)": "https://github.com/kangtegong/pyuring/blob/main/docs/USAGE.md",
-        "Install": "https://github.com/kangtegong/pyuring/blob/main/docs/INSTALLATION.md",
-        "Changelog": "https://github.com/kangtegong/pyuring/blob/main/docs/CHANGELOG.md",
-        "Testing": "https://github.com/kangtegong/pyuring/blob/main/docs/TESTING.md",
+        "Documentation": "https://kangtegong.github.io/pyuring/",
+        "README": "https://github.com/kangtegong/pyuring#readme",
+        "API reference": "https://kangtegong.github.io/pyuring/USAGE/",
+        "Install": "https://kangtegong.github.io/pyuring/INSTALLATION/",
+        "Changelog": "https://kangtegong.github.io/pyuring/CHANGELOG/",
+        "Testing": "https://kangtegong.github.io/pyuring/TESTING/",
     },
     packages=["pyuring", "pyuring.lib", "pyuring.native"],
     package_data={
