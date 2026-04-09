@@ -20,8 +20,10 @@ from pyuring._native import (
 
 
 def _sockaddr_in(host: str, port: int) -> tuple[bytes, int]:
+    # struct sockaddr_in (16 bytes): sin_family (native u16), sin_port (network order), sin_addr, zero pad.
+    # Do not use "!HH" for the first two shorts: that breaks sin_family on little-endian (EAFNOSUPPORT).
     return (
-        struct.pack("!HH4s8x", socket.AF_INET, socket.htons(port), socket.inet_aton(host)),
+        struct.pack("<H", socket.AF_INET) + struct.pack("!H", port) + socket.inet_aton(host) + b"\x00" * 8,
         16,
     )
 

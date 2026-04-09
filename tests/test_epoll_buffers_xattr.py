@@ -12,6 +12,8 @@ import tests._linux  # noqa: F401
 from pyuring._native import (
     EpollEvent,
     IORING_OP_EPOLL_CTL,
+    IORING_OP_FGETXATTR,
+    IORING_OP_FSETXATTR,
     IORING_OP_GETXATTR,
     IORING_OP_PROVIDE_BUFFERS,
     IORING_OP_REMOVE_BUFFERS,

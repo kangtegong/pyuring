@@ -66,7 +66,8 @@ class TestOpenat2Ftruncate(unittest.TestCase):
                 if not ring.probe_opcode_supported(IORING_OP_OPENAT2):
                     self.skipTest("openat2 not supported")
                 how = OpenHow()
-                how.flags = os.O_RDONLY
+                # ftruncate requires a writable fd (EINVAL on O_RDONLY).
+                how.flags = os.O_RDWR
                 how.mode = 0
                 how.resolve = 0
                 fd = ring.openat2(path, how, dir_fd=AT_FDCWD)

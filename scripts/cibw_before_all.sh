@@ -28,4 +28,6 @@ if [[ ! -f "${ROOT}/third_party/liburing/src/include/liburing.h" ]]; then
   git clone --depth 1 https://github.com/axboe/liburing.git "${ROOT}/third_party/liburing"
 fi
 
-make -C "${ROOT}/third_party/liburing" -j"$(nproc)"
+# Build only liburing.a (src/). The default "all" target also builds test/ and examples/
+# and can fail in minimal manylinux images (extra deps, flaky tests).
+make -C "${ROOT}/third_party/liburing" library -j"$(nproc)"
