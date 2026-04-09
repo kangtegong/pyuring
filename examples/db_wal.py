@@ -1,28 +1,31 @@
 #!/usr/bin/env python3
 """
-Write-Ahead Log (WAL) pattern using pyuring.
+Sequential append with per-record durability using pyuring.
 
-Databases like PostgreSQL, SQLite (WAL mode), and RocksDB use a Write-Ahead
-Log to guarantee durability. Before modifying data in place, the change is
-first written sequentially to the WAL file and fsynced. This ensures that if
-the process crashes, the log can be replayed to recover committed transactions.
+Any application that appends records to a file and must guarantee each record
+is durable before proceeding hits the same bottleneck: write() + fsync() is
+two syscalls, and fsync() can take 0.5–10 ms on real storage even on fast NVMe.
+The more frequently you fsync, the lower your throughput.
 
-WAL write requirements:
-  - Sequential append (no seeks between records)
-  - fsync (or fdatasync) after each committed transaction to guarantee durability
-  - Low latency per write, because applications block waiting for commit
+This pattern applies to:
+  - Databases (WAL: PostgreSQL, SQLite, RocksDB)
+  - Message queues (Kafka log segments, NATS JetStream)
+  - Event sourcing systems (append-only event logs)
+  - Audit trails and compliance logs (every entry must be durable)
+  - Any service that calls fsync per committed unit of work
 
-Standard approach: open(O_WRONLY|O_APPEND), write(), fsync() — three syscalls
-per transaction (open is amortized, but write + fsync still stall the caller).
+The key improvement pyuring enables is the group commit pattern: batch multiple
+records into a single ring submission, then fsync once at the end. This reduces
+the number of fsync calls from N (one per record) to 1 (one per batch), which
+is the dominant cost at high write rates.
 
-pyuring approach: submit the write as an async SQE and chain an fsync SQE
-linked to it (IOSQE_IO_LINK). The kernel executes the write then the fsync
-in order without requiring a second syscall from Python.
+For workloads that cannot tolerate group commit (strict per-record durability),
+pyuring's RWF_DSYNC flag (sync_policy="data") or IOSQE_IO_LINK chaining can
+reduce syscall round-trips compared to separate write() + fsync() calls.
 
-This example simulates a WAL writer that appends variable-length transaction
-records and fsyncs per committed transaction. It compares:
-  - standard: write() + fsync() per transaction
-  - pyuring linked: chained write→fsync SQEs per transaction, polled in batch
+This example compares:
+  - standard: write() + fsync() per record (baseline durable append)
+  - pyuring group commit: batched async writes + single fsync at the end
 
 Usage:
     python3 examples/db_wal.py

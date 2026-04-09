@@ -1,37 +1,36 @@
 #!/usr/bin/env python3
 """
-asyncio file server using UringAsync.
+Integrating pyuring with asyncio using UringAsync.
 
-A common pattern in async web frameworks (aiohttp, Starlette, FastAPI) is to
-serve static files: open a file, read its contents, and stream the bytes to
-a network socket. The standard approach uses aiofiles or loop.run_in_executor
-to avoid blocking the event loop on file reads.
+Python's asyncio is built around network I/O (sockets, pipes) which the event
+loop polls natively. File I/O is not natively async in the Linux kernel's
+epoll interface, so the standard workaround is to offload file reads to a
+thread pool (aiofiles, loop.run_in_executor). Every file read then pays a
+thread wakeup cost, and the thread pool becomes a bottleneck under high load.
 
-pyuring provides a third option: use UringAsync to submit file reads as io_uring
-SQEs and await completions via the ring's CQ file descriptor. The event loop
-monitors ring_fd with add_reader(), so there is no extra thread pool and no
-per-operation thread wakeup overhead.
+UringAsync solves this by registering the io_uring completion queue file
+descriptor (ring_fd) with asyncio's event loop via add_reader(). When the
+kernel signals that completions are ready, the event loop delivers them to
+waiting coroutines — no thread pool, no per-operation thread wakeup.
 
-This example implements a minimal asyncio TCP server that:
-  1. Accepts a connection
-  2. Reads a filename from the client (one line)
-  3. Reads the file using UringAsync
-  4. Sends the file contents back
-  5. Closes the connection
+This pattern applies to any asyncio application that reads or writes files:
+  - Web frameworks serving static files (aiohttp, Starlette, FastAPI)
+  - API servers that read config, templates, or assets per request
+  - Data pipelines that mix network I/O and file I/O in the same event loop
+  - CLI tools that use asyncio and need non-blocking file access
+  - Any service where thread pool overhead is a concern at high concurrency
 
-It demonstrates UringAsync in a realistic concurrent I/O context alongside
-asyncio network sockets.
+This example implements a minimal asyncio TCP server where file reads are
+driven entirely by the event loop via UringAsync, with no background threads.
 
 Usage:
-    # Terminal 1: start the server
-    python3 examples/async_file_server.py --serve
-
-    # Terminal 2: request a file
-    echo "/etc/hostname" | nc 127.0.0.1 9999
-
-    # Run the built-in self-test (starts server, sends requests, checks output)
+    # Run the built-in self-test (starts server, sends requests, verifies output)
     python3 examples/async_file_server.py
-    python3 examples/async_file_server.py --files 20 --size-kb 64
+    python3 examples/async_file_server.py --files 50 --size-kb 256
+
+    # Run as a persistent server (Ctrl-C to stop)
+    python3 examples/async_file_server.py --serve
+    echo "/etc/hostname" | nc 127.0.0.1 9999
 """
 
 from __future__ import annotations

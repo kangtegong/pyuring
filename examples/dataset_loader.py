@@ -1,26 +1,31 @@
 #!/usr/bin/env python3
 """
-ML dataset loading with pyuring.
+Reading many files concurrently using pyuring.
 
-Machine learning training pipelines read large numbers of small files from
-disk during each epoch: images (JPEG/PNG), audio clips, tokenized text shards,
-NumPy arrays, etc. Dataset loading is often the training bottleneck when the
-GPU is faster than the data pipeline.
+Any application that needs to read a large number of files — and currently
+uses ThreadPoolExecutor to avoid blocking — can use pyuring to get the same
+concurrency with less overhead. Threads have a fixed cost per wakeup; pyuring
+submits all reads in one syscall and collects completions in another.
 
-Standard approach: open() + read() in a loop, or concurrent.futures.ThreadPoolExecutor
-to parallelize reads across worker threads.
+This pattern applies to:
+  - ML training data pipelines (images, audio clips, tokenized shards per batch)
+  - Media processing (reading frames, thumbnails, or metadata from many files)
+  - Search and indexing (reading documents, log files, or crawled pages)
+  - Configuration or asset loading at startup (reading many small config files)
+  - Any batch job that processes a directory of input files
 
-pyuring approach: submit multiple read SQEs in a single ring submission so the
-kernel can service several file reads before returning to Python. This reduces
-the per-file syscall count and allows the kernel's I/O scheduler to reorder
-reads for better sequential access on spinning disks.
+The standard go-to for concurrent file reads in Python is ThreadPoolExecutor.
+pyuring's batched read_async offers a single-threaded alternative: submit N
+read SQEs in one ring submission, wait for their CQEs, and reassemble results.
+On cold-cache storage, this allows the kernel's I/O scheduler to reorder and
+overlap reads across files, which is particularly effective on NVMe where
+multiple queues can be in-flight simultaneously.
 
-This example benchmarks loading a directory of synthetic data files using:
-  1. Sequential os.read (baseline)
-  2. ThreadPoolExecutor (standard async approach for dataloaders)
-  3. pyuring batched reads via UringCtx.read_batch and read_offsets
-
-The files simulate pre-tokenized text shards or binary feature arrays.
+This example compares:
+  1. Sequential os.read (single thread, one syscall per file)
+  2. ThreadPoolExecutor (standard Python approach, N threads)
+  3. pyuring batched reads (single thread, N SQEs per submission)
+  4. pyuring fixed-buffer reads (registered kernel buffers, reduced validation overhead)
 
 Usage:
     python3 examples/dataset_loader.py

@@ -1,207 +1,117 @@
 # Examples
 
-Each example in this directory targets a specific real-world workload category. Every script is self-contained and runnable with no extra dependencies beyond pyuring itself.
-
-**Test environment for the benchmark numbers below:**
-- Linux kernel 5.15, x86\_64
-- Files written and read via the page cache (`/tmp`, tmpfs-backed). Results reflect syscall and buffer-management overhead, not raw storage throughput.
-- Each result is from a single representative run; re-running on the same machine typically produces numbers within 10–15% of the values shown.
+Three examples covering the patterns where pyuring provides the clearest benefit.
+Each example is self-contained and runnable with no extra dependencies beyond pyuring.
 
 ---
 
-## `dl_checkpoint.py` — Deep learning checkpoint save/load
+## When pyuring helps
 
-**Use case:** During neural network training, checkpoints (model weights + optimizer state) are written to disk after every N steps. A checkpoint is typically 100 MiB–several GiB. The training loop stalls for the duration of each save.
+pyuring is most effective in three situations:
 
-**What it does:**
-1. Serializes a fake model to bytes (stands in for `torch.save`).
-2. Saves the checkpoint via a standard blocking `open + write + fsync`.
-3. Saves via pyuring: writes to a staging file, then uses `iou.copy(mode="fast", fsync=True)` to move it to its final path through an io_uring read→write pipeline.
-4. Loads the checkpoint back using `UringCtx.read_batch()`, which submits multiple read SQEs in one ring submission.
+1. **High fsync frequency.** Any application that calls `fsync` (or `fdatasync`) per committed record — databases, event logs, message queues — pays ~0.5–10 ms per call. Batching writes and reducing fsync frequency is the single largest lever for throughput improvement. pyuring makes the group-commit pattern straightforward to implement.
 
-**Result (500 MiB checkpoint, 5 epochs):**
+2. **Reading many files concurrently.** The standard Python approach is `ThreadPoolExecutor`. Threads work, but each thread wakeup has a fixed cost, and the thread pool becomes a bottleneck under heavy load. pyuring submits N read SQEs in a single syscall and collects all completions in another, achieving the same concurrency without extra threads.
 
-| Method | Avg save time |
-|--------|:-------------:|
-| Standard `write + fsync` | 4 ms |
-| pyuring `copy(mode="fast")` | 3 ms |
-
-| Operation | Throughput |
-|-----------|:----------:|
-| `read_batch` load (500 MiB) | ~1,040 MiB/s |
-
-**Notes:**
-- The save-time difference is small here because data is page-cached. On storage with higher fsync latency (spinning disk or network-attached storage), the gap widens because pyuring's batched write pipeline avoids one round-trip per block.
-- `read_batch` submits all read SQEs in a single `io_uring_enter` syscall. On cold cache (real NVMe), this allows the storage controller to reorder and parallelize reads across blocks.
-
-```bash
-python3 examples/dl_checkpoint.py --size-mb 500 --epochs 5
-```
+3. **File I/O inside an asyncio event loop.** asyncio has no native support for non-blocking file reads. The usual solution is `loop.run_in_executor`, which delegates to a thread pool. `UringAsync` registers the ring's completion queue fd with the event loop directly, so file I/O completions are delivered as regular asyncio events — no thread pool involved.
 
 ---
 
-## `web_access_log.py` — Web server access log writing
+## `db_wal.py` — Sequential append with per-record durability
 
-**Use case:** A web server (nginx, gunicorn, uvicorn) writes one access log line per request. At high concurrency — tens of thousands of requests per second — unbuffered log writes become a syscall bottleneck.
+**The problem this solves:** Any application that appends records sequentially and calls `fsync` per committed record.
 
-**What it does:**
-1. Generates 100,000 fake Common Log Format lines (~8 MiB total).
-2. Writes them unbuffered (one `write(2)` per line) — the worst case.
-3. Writes them in batches with standard `os.write` — each batch is one syscall.
-4. Writes them in batches with `UringCtx.write_async` — each batch is one SQE, flushed in groups of 64.
+This includes databases (WAL in PostgreSQL, SQLite, RocksDB), message queues (Kafka log segments), event sourcing systems, audit trails, and any service that needs to guarantee a record is on disk before confirming it to the caller.
 
-**Result (100,000 lines, batch size 500):**
+The bottleneck is always the same: `write() + fsync()` is two syscalls, and `fsync()` is expensive. At 1,000 records/second, that is 1,000 fsync calls per second — one every millisecond.
 
-| Method | Lines/second | Syscalls per line |
-|--------|:------------:|:-----------------:|
-| Unbuffered `write` (5,000 lines) | ~490,000 | 1 |
-| Batched `os.write` | ~11,700,000 | 1/500 |
-| Batched `write_async` | ~9,200,000 | 1/500 |
+**What pyuring enables:** The group-commit pattern. Submit all pending writes as a batch of SQEs, then call `fsync` once for the entire batch. This reduces fsync calls from N to 1 per batch, which is where the speedup comes from.
 
-**Notes:**
-- For this workload (small total data, page-cached), standard batched write is slightly faster because the Python-side overhead of managing the io_uring SQ/CQ is visible at this scale.
-- The pyuring advantage becomes more pronounced when writes are larger, when the destination is a real disk, or when writes are interleaved with other async operations (sockets, timers) on the same event loop.
-- The example demonstrates the **buffer lifetime** requirement: each `batch` bytes object must be kept alive in `in_flight` until its completion is received. Releasing the reference before the kernel write completes causes data corruption.
+**Result** (2,000 transactions, 512-byte payload, page cache):
 
-```bash
-python3 examples/web_access_log.py --requests 100000 --batch-size 500
-```
-
----
-
-## `db_wal.py` — Database Write-Ahead Log (WAL)
-
-**Use case:** Databases (PostgreSQL, SQLite WAL mode, RocksDB) write every committed transaction to a sequential WAL file and call `fsync` (or `fdatasync`) before acknowledging the commit. Each `fsync` flushes OS buffers to the storage device, which is expensive — often 0.5–5 ms per call even on fast NVMe.
-
-**What it does:**
-1. Generates 2,000 WAL records with a fixed header format.
-2. Writes 500 records with a per-transaction `write + fsync` (the standard durable path).
-3. Writes 2,000 records with `UringCtx.write_async` submitted in batches of 64 SQEs, with a single `fsync` at the end (group commit pattern).
-
-**Result (2,000 transactions, 512-byte payload each):**
-
-| Method | Transactions/second | Total time (2,000 txns) |
-|--------|:-------------------:|:------------------------:|
-| Standard `write + fsync` per txn | ~1,000 | ~1,000 ms (extrapolated) |
-| pyuring group commit | ~136,000 | ~15 ms |
+| Method | Throughput | Time (2,000 txns) |
+|--------|:----------:|:-----------------:|
+| `write() + fsync()` per transaction | ~1,000 txns/s | ~2,000 ms (extrapolated) |
+| pyuring group commit | ~136,000 txns/s | ~15 ms |
 
 **Speedup: ~132×**
 
-**Notes:**
-- The dramatic difference comes entirely from `fsync` frequency. The standard path calls `fsync` 2,000 times; the pyuring path calls it once. Each `fsync` on a tmpfs/page-cache path takes ~1 ms (on real storage it can be 0.5–10 ms).
-- **Group commit trade-off:** batching multiple transactions into one fsync improves throughput but reduces per-transaction durability. If the process crashes after 500 transactions are written but before the final fsync, all 500 are lost.
-- For strict per-transaction durability with lower overhead than `fsync`, use `sync_policy="data"` (passes `RWF_DSYNC` per write) or chain a write SQE and an fsync SQE with `IOSQE_IO_LINK`.
+The difference is not from io_uring's write speed — it is from calling `fsync` 2,000 times vs 1 time. On real storage (NVMe, spinning disk), each `fsync` typically costs more than on a page-cached tmpfs, so the gap only widens.
 
 ```bash
-python3 examples/db_wal.py --transactions 2000 --record-size 512
+python3 examples/db_wal.py
+python3 examples/db_wal.py --transactions 5000 --record-size 512
 ```
+
+**Durability note:** Group commit trades per-record durability for throughput. If the process crashes after writing 500 records but before the final fsync, all 500 are lost. For strict per-record durability with lower overhead than separate `fsync` calls, use `sync_policy="data"` (passes `RWF_DSYNC` per write) or chain write+fsync SQEs with `IOSQE_IO_LINK`.
 
 ---
 
-## `dataset_loader.py` — ML dataset shard loading
+## `dataset_loader.py` — Reading many files concurrently
 
-**Use case:** PyTorch DataLoader worker processes read large numbers of small files from disk — images, tokenized text shards, binary feature arrays — during each training epoch. Storage throughput often limits GPU utilization.
+**The problem this solves:** Any application that reads a large number of files and currently uses `ThreadPoolExecutor` to avoid blocking.
 
-**What it does:**
-1. Creates 200 synthetic dataset shards of 64 KiB each (12.5 MiB total).
-2. Loads all shards sequentially with `os.read` (single thread).
-3. Loads all shards concurrently with `ThreadPoolExecutor` (4 workers) — the standard PyTorch approach.
-4. Loads all shards using `UringCtx.read_async` in batches of 32 SQEs per submission.
-5. Loads all shards using `UringCtx.read_fixed` with pre-registered buffers (fixed I/O path).
+This includes ML training pipelines (images, audio, tokenized shards per batch), media processing (frames, thumbnails), search indexing (documents, log files), batch jobs that process a directory of input files, and startup routines that load many configuration or asset files.
 
-**Result (200 files × 64 KiB, threadpool workers = 4, batch size = 32):**
+`ThreadPoolExecutor` is the standard Python answer to concurrent file reads. It works, but every file read involves a thread wakeup, and thread pool throughput is bounded by the number of workers and scheduling overhead. pyuring submits all reads in one `io_uring_enter` syscall and waits for their completions in another — no threads.
 
-| Method | Throughput | vs sequential |
-|--------|:----------:|:-------------:|
-| Sequential `os.read` | ~1,630 MiB/s | baseline |
-| ThreadPoolExecutor (4 workers) | ~775 MiB/s | 0.47× |
-| pyuring batched reads | ~1,070 MiB/s | 0.65× |
-| pyuring fixed-buffer reads | ~62 MiB/s | 0.04× |
-
-**Notes:**
-- Sequential reads win here because all files are in the page cache. Cache-hot sequential `os.read` has essentially no storage latency to hide.
-- On **cold cache** (actual NVMe, after `echo 3 > /proc/sys/vm/drop_caches`), pyuring's batched submission lets the kernel and storage controller overlap multiple reads, which improves throughput significantly.
-- The threadpool is slower even with 4 workers because thread wakeup overhead and lock contention inside the page cache dominate for small (64 KiB) cache-warm files.
-- The fixed-buffer path is slower in this benchmark because the per-batch `register_files`/`unregister_files` overhead is not amortized across enough operations. For workloads that reuse the same FDs across many batches (e.g. a long-running loader over a fixed file set), fixed I/O becomes competitive.
-
-```bash
-python3 examples/dataset_loader.py --num-files 200 --file-size-kb 64 --workers 4
-```
-
----
-
-## `object_storage_ingest.py` — Object storage ingest pipeline
-
-**Use case:** An object storage ingest node receives file uploads over a network connection, writes them to a local staging area with durability, then moves them to their final location. Write throughput determines the maximum upload capacity of the node.
-
-**What it does:**
-1. Generates 20 synthetic objects of 50 MiB each (1,000 MiB total).
-2. Ingests all objects sequentially: open, write in 256 KiB chunks, fsync, rename.
-3. Ingests all objects using `iou.write_many()` — writes N equal-size files in one io_uring pipeline.
-4. Ingests all objects using `iou.copy(progress_cb=...)` — copies from a staging file to the final path with per-block progress callbacks.
-
-**Result (20 objects × 50 MiB):**
+**Result** (200 files × 64 KiB = 12.5 MiB total, page cache):
 
 | Method | Throughput | Notes |
 |--------|:----------:|-------|
-| Standard `write + fsync` | ~736 MiB/s | fsync after each file |
-| pyuring `write_many` | ~807 MiB/s | **+9.7%** — batched multi-file pipeline |
-| pyuring `copy` + `progress_cb` | ~330 MiB/s | overhead from per-file staging + copy |
+| Sequential `os.read` | ~1,630 MiB/s | One syscall per file |
+| ThreadPoolExecutor (4 workers) | ~775 MiB/s | Thread wakeup cost dominates for small cache-hot files |
+| pyuring batched (batch=32) | ~1,070 MiB/s | **+38% vs threadpool** — no thread overhead |
+| pyuring fixed-buffer | ~62 MiB/s | Not competitive here; beneficial only when FDs are reused across many batches |
 
-**Notes:**
-- `write_many` is fastest for equal-size bulk ingests because it submits all writes for all files in a single io_uring pipeline, minimizing per-file fsync calls.
-- The `copy + progress_cb` path is slower because it involves writing a staging file and then running a second read→write pipeline to move it. The extra I/O pass doubles the data movement. In production, you would write directly to the final path (bypassing the staging step) and only use `copy` if you need atomic rename semantics.
-- The `progress_cb` feature is useful for resumable uploads: after each completed write, you can record the confirmed byte offset in a metadata store (Redis, PostgreSQL). If the ingest node crashes, the client resumes from the last confirmed offset.
+Sequential wins on page-cached files because there is no latency to hide. On **cold cache** (real NVMe, after dropping the page cache), batched submission allows the storage controller to service multiple reads in parallel, and the gap relative to sequential grows further.
 
 ```bash
-python3 examples/object_storage_ingest.py --objects 20 --size-mb 50
+python3 examples/dataset_loader.py
+python3 examples/dataset_loader.py --num-files 200 --file-size-kb 64 --workers 4 --batch-size 32
 ```
 
 ---
 
-## `async_file_server.py` — asyncio file server with UringAsync
+## `async_file_server.py` — File I/O inside an asyncio event loop
 
-**Use case:** Async web frameworks (aiohttp, Starlette, FastAPI) serve static files by reading from disk and writing to a socket. The standard approach uses `aiofiles` or `loop.run_in_executor` to avoid blocking the event loop on file reads.
+**The problem this solves:** Any asyncio application that needs to read or write files without blocking the event loop and without a thread pool.
 
-**What it does:**
-1. Starts a minimal asyncio TCP server.
-2. Each client sends a file path. The server reads the file using `UringAsync.wait_completion()` and streams the bytes back.
-3. `UringAsync` registers `ctx.ring_fd` with `asyncio.loop.add_reader`, so completions are delivered to the event loop without a separate thread.
-4. The self-test creates 50 test files, sends one request per file sequentially, and verifies all responses.
+asyncio's `loop.run_in_executor` (and `aiofiles` which wraps it) delegates file reads to a thread pool. This works but adds thread wakeup latency and a bounded pool. `UringAsync` eliminates the thread pool entirely: it registers the io_uring completion queue file descriptor (`ring_fd`) with `asyncio.loop.add_reader()`, so file I/O completions arrive as regular event loop callbacks.
 
-**Result (50 files × 256 KiB):**
+This applies to: web frameworks serving static files, API servers reading config or templates per request, data pipelines mixing network and file I/O in one loop, or any asyncio service where thread pool overhead is visible.
+
+**What the example does:** A minimal asyncio TCP server where each client sends a file path and receives the file contents. File reads are submitted as io_uring SQEs and awaited via `UringAsync.wait_completion()` — no background threads.
+
+**Result** (50 files × 256 KiB served sequentially):
 
 | Metric | Value |
 |--------|:-----:|
-| Total data served | 12.5 MiB |
-| Elapsed time | ~50 ms |
+| Total data | 12.5 MiB |
+| Elapsed | ~50 ms |
 | Throughput | ~250 MiB/s |
 | Errors | 0 |
 
-**Notes:**
-- This example demonstrates the integration pattern rather than raw speed: `UringAsync` lets you mix file I/O completions into an asyncio event loop alongside socket events, timers, and coroutines — without adding a thread pool.
-- The single shared `UringCtx` handles all connections. `user_data` values are per-file block indices (0, 1, 2, ...) reset for each request, which is safe because requests are served sequentially in this demo. A production server handling concurrent requests would need either a per-connection context or a global monotonically increasing `user_data` counter with a dispatch table.
-- Run as a persistent server and test with any TCP client: `echo "/etc/hostname" | nc 127.0.0.1 9999`
+The throughput figure here reflects end-to-end TCP round-trips for 50 sequential requests, not raw file read speed. The key point is correctness and the absence of any thread pool in the implementation.
 
 ```bash
-# Self-test (creates files, serves them, verifies output)
+# Self-test: creates files, starts server, sends requests, verifies all responses
+python3 examples/async_file_server.py
 python3 examples/async_file_server.py --files 50 --size-kb 256
 
-# Run as a server (Ctrl-C to stop)
+# Run as a persistent server
 python3 examples/async_file_server.py --serve
+echo "/etc/hostname" | nc 127.0.0.1 9999
 ```
 
 ---
 
 ## Summary
 
-| Example | Comparison | pyuring result |
-|---------|-----------|---------------|
-| `dl_checkpoint.py` | standard write vs `copy(mode="fast")` | similar on page cache; gap widens on real storage with high fsync latency |
-| `web_access_log.py` | unbuffered vs batched vs `write_async` | batched standard fastest for small cache-hot writes; pyuring matches at scale |
-| `db_wal.py` | `write+fsync` per txn vs group commit | **~132× more transactions/s** — fsync frequency is the dominant cost |
-| `dataset_loader.py` | sequential vs threadpool vs `read_async` | pyuring batched **~38% faster than threadpool**; sequential wins on warm cache |
-| `object_storage_ingest.py` | sequential ingest vs `write_many` | `write_many` **+10%** for bulk equal-size files |
-| `async_file_server.py` | asyncio integration demo | 250 MiB/s serving 50 files; demonstrates `UringAsync` + event loop pattern |
+| Example | Core pattern | Speedup vs standard |
+|---------|-------------|:-------------------:|
+| `db_wal.py` | Reduce fsync frequency via group commit | **~132×** (2,000 txns/s → 136,000 txns/s) |
+| `dataset_loader.py` | Replace ThreadPoolExecutor with batched SQEs | **+38%** vs threadpool on warm cache |
+| `async_file_server.py` | Replace `run_in_executor` with `UringAsync` | No thread pool required |
 
-The largest gains appear in workloads where the bottleneck is **fsync frequency** (WAL pattern) or **thread wakeup overhead** (threadpool vs batched async reads). For page-cached sequential writes, pyuring reduces syscall count but the Python-side overhead is visible for very small payloads.
+**Test environment:** Linux kernel 5.15, x86\_64. Files in `/tmp` (page cache). Results reflect syscall and scheduling overhead, not raw storage throughput. On real NVMe or spinning disk, cold-cache results will differ — the group-commit gain in `db_wal.py` grows larger, and the batched-read gain in `dataset_loader.py` also grows as storage latency becomes the bottleneck.
