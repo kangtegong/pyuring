@@ -1,15 +1,19 @@
 # Example throughput charts
 
-Bar charts from [`examples/README.md`](https://github.com/kangtegong/pyuring/blob/main/examples/README.md) (MiB/s, **before** vs **pyuring**).
+Bar charts for [`examples/README.md`](https://github.com/kangtegong/pyuring/blob/main/examples/README.md): **MiB/s**, **before** vs **pyuring**.
 
-## asyncio
+Workloads are **many small/medium files** (thread pool or `asyncio.gather`+executor vs batched io_uring), where batching usually favors pyuring. Regenerate with:
 
-![asyncio](asyncio_read_mib_s.svg)
+`PYTHONPATH=. python3 scripts/gen_example_graphs.py`
 
-## FastAPI
+## PyTorch-style (many shards)
 
-![fastapi](fastapi_payload_mib_s.svg)
+![pytorch](example_pytorch_shards.svg)
 
-## PyTorch-style shards
+## asyncio (many files)
 
-![pytorch](pytorch_shards_mib_s.svg)
+![asyncio](example_asyncio_many_files.svg)
+
+## FastAPI (many on-disk reads per batch)
+
+![fastapi](example_fastapi_many_reads.svg)

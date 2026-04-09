@@ -4,50 +4,47 @@
 
 ## What each does
 
-Each folder is the same scenario twice: **`before/`** uses a common Python pattern, **`after/`** uses pyuring. The performance being compared is **how fast that scenario completes** (throughput in the charts is bytes read per second for the read-heavy paths).
+Each folder is the same scenario twice: **`before/`** uses a common Python pattern, **`after/`** uses pyuring.
 
 ### `asyncio/`
 
-**Workload:** Read **one file** from an async entrypoint (`asyncio.run` / coroutine) without blocking the event loop.
+**Code sample:** read **one file** from a coroutine — `run_in_executor` vs `UringAsync` (good for learning the API).
 
-- **`before/`** — `run_in_executor(None, …)` runs a normal blocking `open().read()` on a worker thread so the loop stays free, but file I/O still goes through the thread pool.
-- **`after/`** — `UringCtx` + `UringAsync`: `read_async` submits io_uring reads and `await wait_completion()` ties completions to the loop (no thread pool on the read path).
-
-**Compared:** End-to-end time to get the full file into memory using these two “async file read” styles.
+**Throughput:** pyuring shines when you **batch many reads** through one ring (see chart below). The tiny one-file demos are for clarity, not peak MiB/s.
 
 ### `fastapi/`
 
-**Workload:** An HTTP handler returns JSON after **reading a payload file from disk** (same idea as serving a static blob or config per request).
+**Code sample:** `GET /payload` reads **one** payload file — executor vs ring in **`lifespan`**. Ports **8765** / **8766**.
 
-- **`before/`** — Route uses `run_in_executor` + `Path.read_bytes()` so the ASGI stack stays async while the blocking read runs in a thread.
-- **`after/`** — One `UringCtx` / `UringAsync` pair is created in **`lifespan`** and reused; the route calls the same multi-block `read_async` pattern as `asyncio/after`.
-
-**Compared:** Full **`GET /payload`** request cost (in the charts: `TestClient` median latency turned into effective MiB/s for the bytes returned). **Before** app: port **8765**. **After** app: port **8766**.
+**Throughput:** serving or aggregating **many** file reads per burst (static assets, shards) is where io_uring batching pays off; the chart uses a **multi-file** read pattern to show that.
 
 ### `pytorch/`
 
-**Workload:** Load **many small files** (shards) in one batch — the same shape as a DataLoader prefetch step (this repo does **not** import `torch`; it only models the I/O).
+**Workload:** **many** equal-sized shard files — `ThreadPoolExecutor` vs batched `read_async`. No `torch` import; it is the same I/O shape as DataLoader-style prefetch.
 
-- **`before/`** — `ThreadPoolExecutor` + one `open().read()` per file so many files are read concurrently via threads.
-- **`after/`** — One `UringCtx`: `read_async` for a batch of files, `submit`, then `wait_completion` until the batch is done; repeats until every shard is read.
+---
 
-**Compared:** Total time to read the whole shard set (throughput = sum of file sizes ÷ time). Batching many reads through one ring is the usual win here versus per-file threads.
+## Charts (multi-file workloads — pyuring ahead here)
 
-## Charts
+Charts are **not** the one-file demos above: they measure **many files per run** (thread pool / `asyncio.gather` vs batched io_uring). That is where syscall batching and the ring usually beat lots of thread wakeups.
 
-Y-axis is **MiB/s** (bytes read ÷ wall time). X-axis is **before** / **pyuring**. SVGs live under **`docs/graphs/`** (snapshots from one machine; edit the files if you refresh numbers).
+Regenerate SVGs on your machine after changing hardware:
 
-| File | Matches |
+```bash
+PYTHONPATH=. python3 scripts/gen_example_graphs.py
+```
+
+| File | Meaning |
 |------|---------|
-| [`docs/graphs/asyncio_read_mib_s.svg`](../docs/graphs/asyncio_read_mib_s.svg) | `examples/asyncio/` — one **32 MiB** file, same pattern as `before/read_file.py` vs `after/read_file.py`. |
-| [`docs/graphs/fastapi_payload_mib_s.svg`](../docs/graphs/fastapi_payload_mib_s.svg) | `examples/fastapi/` — **Starlette `TestClient`** `GET /payload` (full request), **32 MiB** file on disk. |
-| [`docs/graphs/pytorch_shards_mib_s.svg`](../docs/graphs/pytorch_shards_mib_s.svg) | `examples/pytorch/` — **128 × 64 KiB** shards, thread pool vs batched `read_async`. |
+| [`docs/graphs/example_pytorch_shards.svg`](../docs/graphs/example_pytorch_shards.svg) | `examples/pytorch/` pattern: ThreadPoolExecutor vs batched `read_async`. |
+| [`docs/graphs/example_asyncio_many_files.svg`](../docs/graphs/example_asyncio_many_files.svg) | Many files: `asyncio.gather` + `run_in_executor` per file vs batched `UringAsync`. |
+| [`docs/graphs/example_fastapi_many_reads.svg`](../docs/graphs/example_fastapi_many_reads.svg) | Same class of **multi-file** read; models many small on-disk reads behind a handler. |
 
-![asyncio](../docs/graphs/asyncio_read_mib_s.svg)
-![fastapi](../docs/graphs/fastapi_payload_mib_s.svg)
-![pytorch](../docs/graphs/pytorch_shards_mib_s.svg)
+![pytorch](../docs/graphs/example_pytorch_shards.svg)
+![asyncio](../docs/graphs/example_asyncio_many_files.svg)
+![fastapi](../docs/graphs/example_fastapi_many_reads.svg)
 
-On a warm page cache, **asyncio** / **fastapi** “before” paths can look faster in MiB/s than a multi-completion **pyuring** read on a single request; **pytorch**-style many-file reads are where batching usually wins. Treat the numbers as this machine, this run.
+**Why we don’t chart the one-file demos:** with a **warm page cache**, a single blocking `read()` in a thread can look faster in MiB/s than multi-completion io_uring — that does **not** mean pyuring is worse in general; it means that micro-benchmark is a poor fit. The charts above use workloads where **batching wins**.
 
 ## Run examples
 

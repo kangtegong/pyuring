@@ -10,17 +10,17 @@
     </style>
   </defs>
   <text x="260" y="24" text-anchor="middle" class="title">examples/pytorch — many shard files</text>
-  <text x="260" y="42" text-anchor="middle" class="note">ThreadPoolExecutor (8 workers) vs io_uring batch 32; 128 x 64 KiB</text>
-  <line x1="78.0" y1="240.0" x2="78.0" y2="72" class="axis"/>
-  <line x1="78.0" y1="240.0" x2="472" y2="240.0" class="axis"/>
+  <text x="260" y="42" text-anchor="middle" class="note">160 x 64 KiB; median 5 runs; before=ThreadPool(8)</text>
+  <line x1="78" y1="240.0" x2="78" y2="72" class="axis"/>
+  <line x1="78" y1="240.0" x2="472" y2="240.0" class="axis"/>
   <text x="68" y="244" text-anchor="end" class="label">0</text>
-  <text x="68" y="158" text-anchor="end" class="label">900</text>
-  <text x="68" y="72" text-anchor="end" class="label">1800</text>
+  <text x="68" y="158" text-anchor="end" class="label">1000</text>
+  <text x="68" y="72" text-anchor="end" class="label">2000</text>
   <text x="38" y="158" text-anchor="middle" class="label" transform="rotate(-90 38 158)">MiB/s</text>
-  <rect x="124" y="180.2" width="92" height="59.8" class="bar-before"/>
-  <text x="170" y="174.2" text-anchor="middle" class="label">641</text>
-  <rect x="284" y="91.7" width="92" height="148.3" class="bar-pyuring"/>
-  <text x="330" y="85.7" text-anchor="middle" class="label">1589</text>
+  <rect x="124" y="189.1" width="92" height="50.9" class="bar-before"/>
+  <text x="170" y="183.1" text-anchor="middle" class="label">605</text>
+  <rect x="284" y="102.3" width="92" height="137.7" class="bar-pyuring"/>
+  <text x="330" y="96.3" text-anchor="middle" class="label">1639</text>
   <text x="170" y="268" text-anchor="middle" class="label">before</text>
   <text x="330" y="268" text-anchor="middle" class="label">pyuring</text>
 </svg>

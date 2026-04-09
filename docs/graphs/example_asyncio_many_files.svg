@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="520" height="300" viewBox="0 0 520 300">
+  <defs>
+    <style>
+      .title { font: 600 15px ui-sans-serif, system-ui, sans-serif; fill: #1a1a1a; }
+      .label { font: 13px ui-sans-serif, system-ui, sans-serif; fill: #333; }
+      .note { font: 11px ui-sans-serif, system-ui, sans-serif; fill: #666; }
+      .axis { stroke: #ccc; stroke-width: 1; }
+      .bar-before { fill: #8a8a8a; }
+      .bar-pyuring { fill: #2d6a4f; }
+    </style>
+  </defs>
+  <text x="260" y="24" text-anchor="middle" class="title">examples/asyncio — many files (gather+executor vs batched UringAsync)</text>
+  <text x="260" y="42" text-anchor="middle" class="note">160 x 64 KiB; median 5 runs; before=asyncio.gather + ThreadPoolExecutor per file(8)</text>
+  <line x1="78" y1="240.0" x2="78" y2="72" class="axis"/>
+  <line x1="78" y1="240.0" x2="472" y2="240.0" class="axis"/>
+  <text x="68" y="244" text-anchor="end" class="label">0</text>
+  <text x="68" y="158" text-anchor="end" class="label">600</text>
+  <text x="68" y="72" text-anchor="end" class="label">1200</text>
+  <text x="38" y="158" text-anchor="middle" class="label" transform="rotate(-90 38 158)">MiB/s</text>
+  <rect x="124" y="186.7" width="92" height="53.3" class="bar-before"/>
+  <text x="170" y="180.7" text-anchor="middle" class="label">381</text>
+  <rect x="284" y="110.9" width="92" height="129.1" class="bar-pyuring"/>
+  <text x="330" y="104.9" text-anchor="middle" class="label">922</text>
+  <text x="170" y="268" text-anchor="middle" class="label">before</text>
+  <text x="330" y="268" text-anchor="middle" class="label">pyuring</text>
+</svg>
