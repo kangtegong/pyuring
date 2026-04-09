@@ -28,7 +28,10 @@ jobs:
   test-ubuntu:
     runs-on: ubuntu-latest
     steps:
+      # Vendored liburing (submodule) must be present: distro liburing-dev is often too old for csrc/uring_wrap.c.
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Install build deps
         run: |
@@ -44,6 +47,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - name: Docker test matrix (Ubuntu / Debian / Fedora)
         run: |
@@ -54,6 +59,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          submodules: recursive
 
       - uses: actions/setup-python@v5
         with:
