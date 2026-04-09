@@ -1,5 +1,16 @@
 # Changelog
 
+## [0.3.1] - 2026-04-10
+
+### Fixed
+
+- **Tests (CI / kernels with these opcodes):** import `IORING_OP_FGETXATTR` / `IORING_OP_FSETXATTR` where used; `openat2` + `ftruncate` case opens the temp file **`O_RDWR`** (read-only fds reject `ftruncate`); **`sockaddr_in`** packing for io_uring socket tests uses native-endian `AF_INET`, network-order port, and correct padding so `bind` / `connect` roundtrips do not fail with `EAFNOSUPPORT`.
+- **Manylinux wheel builds:** `scripts/cibw_before_all.sh` runs **`make library`** in vendored liburing only. The default **`make`** target also builds tests/examples and can fail in minimal **cibuildwheel** images; building **`src/`** alone matches what the extension links against.
+
+### Changed
+
+- **CI:** removed the **wheel-smoke** job (one-off **cp312** **manylinux_x86_64** wheel + artifact on every push/PR). **`lint`**, Ubuntu **`make` + unittest**, and the **Docker** Debian/Fedora matrix are unchanged. **Release** (tag **`v*`**) still builds **sdist** + **manylinux** wheels and publishes to PyPI.
+
 ## [0.3.0] - 2026-04-09
 
 ### Added
