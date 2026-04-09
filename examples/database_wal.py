@@ -1,35 +1,31 @@
 #!/usr/bin/env python3
 """
-Sequential append with per-record durability using pyuring.
+Workloads: Database WAL / Message queue / Audit logging / Event sourcing
 
-Any application that appends records to a file and must guarantee each record
-is durable before proceeding hits the same bottleneck: write() + fsync() is
-two syscalls, and fsync() can take 0.5–10 ms on real storage even on fast NVMe.
-The more frequently you fsync, the lower your throughput.
+If your application writes records to disk and calls fsync after each one
+to guarantee durability — this example is for you.
 
-This pattern applies to:
-  - Databases (WAL: PostgreSQL, SQLite, RocksDB)
-  - Message queues (Kafka log segments, NATS JetStream)
-  - Event sourcing systems (append-only event logs)
-  - Audit trails and compliance logs (every entry must be durable)
-  - Any service that calls fsync per committed unit of work
+Databases (PostgreSQL WAL, SQLite WAL mode, RocksDB), message queues
+(Kafka log segments, NATS JetStream), event sourcing systems, and audit
+logs all share the same write pattern: append a record, call fsync, repeat.
+At high throughput, fsync dominates total write time because it flushes
+OS buffers to storage — typically 0.5–10 ms per call on real hardware.
 
-The key improvement pyuring enables is the group commit pattern: batch multiple
-records into a single ring submission, then fsync once at the end. This reduces
-the number of fsync calls from N (one per record) to 1 (one per batch), which
-is the dominant cost at high write rates.
+pyuring enables the group-commit pattern: submit a batch of writes as io_uring
+SQEs and call fsync once for the whole batch. This reduces fsync calls from
+N (one per record) to 1 (one per batch), which is where the ~132x speedup
+in this example comes from.
 
-For workloads that cannot tolerate group commit (strict per-record durability),
-pyuring's RWF_DSYNC flag (sync_policy="data") or IOSQE_IO_LINK chaining can
-reduce syscall round-trips compared to separate write() + fsync() calls.
+  Standard:  write() + fsync() per record  →  ~1,000 records/s
+  pyuring:   batch writes + 1 fsync        →  ~136,000 records/s
 
-This example compares:
-  - standard: write() + fsync() per record (baseline durable append)
-  - pyuring group commit: batched async writes + single fsync at the end
+For strict per-record durability (no group commit), pyuring also supports
+sync_policy="data" (RWF_DSYNC per write) and IOSQE_IO_LINK chained
+write+fsync SQEs — both reduce round-trips vs separate write()+fsync() calls.
 
 Usage:
-    python3 examples/db_wal.py
-    python3 examples/db_wal.py --transactions 5000 --record-size 512
+    python3 examples/database_wal.py
+    python3 examples/database_wal.py --transactions 5000 --record-size 512
 """
 
 from __future__ import annotations

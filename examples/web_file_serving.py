@@ -1,35 +1,36 @@
 #!/usr/bin/env python3
 """
-Integrating pyuring with asyncio using UringAsync.
+Workloads: Web server static files / FastAPI or aiohttp file endpoints / Async data pipelines
 
-Python's asyncio is built around network I/O (sockets, pipes) which the event
-loop polls natively. File I/O is not natively async in the Linux kernel's
-epoll interface, so the standard workaround is to offload file reads to a
-thread pool (aiofiles, loop.run_in_executor). Every file read then pays a
-thread wakeup cost, and the thread pool becomes a bottleneck under high load.
+If your asyncio application reads files and currently uses aiofiles or
+loop.run_in_executor to avoid blocking the event loop — this example is for you.
 
-UringAsync solves this by registering the io_uring completion queue file
-descriptor (ring_fd) with asyncio's event loop via add_reader(). When the
-kernel signals that completions are ready, the event loop delivers them to
-waiting coroutines — no thread pool, no per-operation thread wakeup.
+Web frameworks (aiohttp, Starlette, FastAPI) serving static files, API servers
+reading config or templates per request, and async data pipelines mixing network
+I/O with file I/O all hit the same problem: asyncio has no native non-blocking
+file I/O. The standard fix is loop.run_in_executor, which delegates to a thread
+pool. Under high concurrency, thread wakeup latency and pool saturation are
+measurable.
 
-This pattern applies to any asyncio application that reads or writes files:
-  - Web frameworks serving static files (aiohttp, Starlette, FastAPI)
-  - API servers that read config, templates, or assets per request
-  - Data pipelines that mix network I/O and file I/O in the same event loop
-  - CLI tools that use asyncio and need non-blocking file access
-  - Any service where thread pool overhead is a concern at high concurrency
+UringAsync eliminates the thread pool entirely. It registers the io_uring
+completion queue file descriptor (ring_fd) with asyncio.loop.add_reader().
+When a file read completes in the kernel, the event loop delivers the result
+to the awaiting coroutine — the same way it handles socket events, timers,
+and any other async operation. No threads involved.
 
-This example implements a minimal asyncio TCP server where file reads are
-driven entirely by the event loop via UringAsync, with no background threads.
+  Standard:  await loop.run_in_executor(None, file.read)   # thread pool
+  pyuring:   await ua.wait_completion()                     # event loop, no threads
+
+This example implements a minimal asyncio TCP server. Each client sends a file
+path; the server reads the file via UringAsync and streams the bytes back.
 
 Usage:
-    # Run the built-in self-test (starts server, sends requests, verifies output)
-    python3 examples/async_file_server.py
-    python3 examples/async_file_server.py --files 50 --size-kb 256
+    # Self-test: create files, start server, send requests, verify responses
+    python3 examples/web_file_serving.py
+    python3 examples/web_file_serving.py --files 50 --size-kb 256
 
     # Run as a persistent server (Ctrl-C to stop)
-    python3 examples/async_file_server.py --serve
+    python3 examples/web_file_serving.py --serve
     echo "/etc/hostname" | nc 127.0.0.1 9999
 """
 
