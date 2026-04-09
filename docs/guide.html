@@ -1,0 +1,86 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>pyuring — 손그림 안내</title>
+  <!-- DoodleCSS: https://github.com/chr15m/DoodleCSS | https://chr15m.github.io/DoodleCSS/ -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/gh/chr15m/DoodleCSS@main/doodle.css" />
+  <style>
+    @import url("https://fonts.googleapis.com/css2?family=Short+Stack&display=swap");
+    body.doodle {
+      font-family: "Short Stack", cursive;
+      margin: 0;
+      min-height: 100vh;
+    }
+    main {
+      max-width: 40rem;
+      margin: 0 auto;
+      padding: 1.5rem 1rem 3rem;
+    }
+    h1 {
+      font-size: 2rem;
+      margin-bottom: 0.25rem;
+    }
+    .tagline {
+      margin: 0 0 1.25rem;
+      font-size: 1.05rem;
+    }
+    footer.attrib {
+      margin-top: 2.5rem;
+      font-size: 0.85rem;
+      opacity: 0.85;
+    }
+    footer.attrib a {
+      font-weight: bold;
+    }
+  </style>
+</head>
+<body class="doodle">
+  <main>
+    <h1>pyuring</h1>
+    <p class="tagline">
+      Linux <strong>io_uring</strong>으로 파일 I/O를 하는 Python 바인딩이에요. 링 버퍼로 syscall을 줄이고, 배치·동시 I/O에서 특히 이득이 날 수 있어요.
+    </p>
+
+    <blockquote>
+      커널 5.15+, Python 3.8+, 그리고 <strong>Linux</strong>에서 동작해요. (문서 본문은 영어 섹션이 많아요.)
+    </blockquote>
+
+    <pre>pip install pyuring</pre>
+
+    <fieldset>
+      <legend>문서 (이 사이트)</legend>
+      <ul>
+        <li><a href="./">홈 (요약)</a> — Material 테마</li>
+        <li><a href="INSTALLATION/">설치</a></li>
+        <li><a href="USAGE/">API 레퍼런스</a></li>
+        <li><a href="BENCHMARKS/">벤치마크</a></li>
+        <li><a href="graphs/">예제 차트 (SVG)</a></li>
+        <li><a href="TESTING/">테스트</a></li>
+        <li><a href="SUPPORT/">지원 / 환경</a></li>
+        <li><a href="CHANGELOG/">변경 기록</a></li>
+      </ul>
+    </fieldset>
+
+    <fieldset>
+      <legend>저장소 &amp; 예제</legend>
+      <ul>
+        <li><a href="https://github.com/kangtegong/pyuring">GitHub — kangtegong/pyuring</a></li>
+        <li><a href="https://github.com/kangtegong/pyuring/tree/main/examples">examples/</a> (asyncio / FastAPI / PyTorch 스타일 before·after)</li>
+      </ul>
+    </fieldset>
+
+    <p>
+      <a href="./">← 일반 문서 홈으로</a>
+    </p>
+
+    <footer class="attrib">
+      UI theme:
+      <a href="https://chr15m.github.io/DoodleCSS/" rel="noopener">DoodleCSS</a>
+      by Chris McCormick —
+      <a href="https://github.com/chr15m/DoodleCSS" rel="noopener">MIT</a>
+    </footer>
+  </main>
+</body>
+</html>
