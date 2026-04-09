@@ -2,13 +2,6 @@
 
 Technical backlog for pyuring. Not a release guarantee; items may be reordered or dropped.
 
-## Safety and packaging
-
-- [x] Automatic buffer lifetime for `read_async` / `write_async`: keep Python references until the kernel completes (today callers must keep buffers alive; misuse can mean writes to freed memory).
-- [x] aarch64 manylinux wheels (e.g. `manylinux_2_28_aarch64`): Graviton, Ampere, Raspberry Pi 64-bit — via cibuildwheel QEMU or native ARM runners.
-- [x] Publish sdist on PyPI for Alpine / non-standard glibc: reliable source-install fallback.
-- [x] CI: lint + tests (matrix: Ubuntu / Debian / Fedora), wheel build, publish-on-tag workflow.
-
 ## API and usability
 
 - [ ] High-level async file API compatible with `aiofiles`-style usage, e.g. `async with pyuring.open(path, "rb") as f: data = await f.read()` so adoption can be a small import/surface change.

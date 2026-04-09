@@ -1,7 +1,5 @@
 # pyuring
 
-**Hand-drawn intro (DoodleCSS):** [guide.html](guide.html) — same site, different vibe.
-
 Python bindings for file I/O using the Linux [**io_uring**](https://kernel.dk/io_uring.pdf) interface. Operations are submitted through a shared ring buffer, reducing per-call syscall overhead for concurrent or batched workloads.
 
 The package ships a native wrapper (`liburingwrap.so`) built on [liburing](https://github.com/axboe/liburing) plus `ctypes` bindings. High-level helpers (`copy`, `write`, …) are available alongside direct `UringCtx` / `UringAsync` control.
