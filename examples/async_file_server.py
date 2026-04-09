@@ -179,12 +179,19 @@ async def self_test(num_files: int, size_kb: int) -> None:
             r, w = await asyncio.open_connection(HOST, PORT)
             w.write((path + "\n").encode())
             await w.drain()
-            received = await r.read(len(expected) + 64)
+            # read(n) returns at most n bytes; loop until EOF to get the full file
+            chunks = []
+            while True:
+                chunk = await r.read(65536)
+                if not chunk:
+                    break
+                chunks.append(chunk)
+            received = b"".join(chunks)
             w.close()
             await w.wait_closed()
 
             if received != expected:
-                print(f"  MISMATCH: {path}")
+                print(f"  MISMATCH: {path}  got={len(received)}  want={len(expected)}")
                 errors += 1
 
         elapsed = time.perf_counter() - t0

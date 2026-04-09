@@ -96,22 +96,31 @@ def load_checkpoint_pyuring(path: str, size_mb: int) -> tuple[float, bytes]:
     """
     Load a checkpoint using UringCtx for batched reads.
 
-    For large checkpoints, read_batch() issues multiple read SQEs in a
-    single ring submission, reducing round-trips compared to reading the
-    file in a Python loop.
+    read_batch() submits up to `entries` read SQEs in one ring submission,
+    reducing round-trips compared to reading the file block by block.
+    We cap the batch size at 64 and issue multiple batches for large files.
     """
     block_size = 1 << 20  # 1 MiB per read SQE
-    blocks = size_mb
+    batch_cap = 64         # max SQEs per submission (must equal ring entries)
 
     t0 = time.perf_counter()
     fd = os.open(path, os.O_RDONLY)
+    chunks = []
     try:
-        with iou.UringCtx(entries=64) as ctx:
-            data = ctx.read_batch(fd, block_size=block_size, blocks=blocks)
+        with iou.UringCtx(entries=batch_cap) as ctx:
+            offset = 0
+            remaining = size_mb
+            while remaining > 0:
+                batch = min(remaining, batch_cap)
+                chunk = ctx.read_batch(fd, block_size=block_size, blocks=batch,
+                                       offset=offset)
+                chunks.append(chunk)
+                offset += batch * block_size
+                remaining -= batch
     finally:
         os.close(fd)
 
-    return time.perf_counter() - t0, data
+    return time.perf_counter() - t0, b"".join(chunks)
 
 
 def run(size_mb: int, epochs: int) -> None:
