@@ -1,5 +1,23 @@
 # Changelog
 
+## [0.3.0] - 2026-04-09
+
+### Added
+
+- **`UringAsync`**: asyncio integration via `ring_fd` + `loop.add_reader()`. File completions arrive as event-loop callbacks with no thread pool. `wait_completion()` and `wait_completion_in_executor()` APIs; `UringAsync.close()` deregisters the reader.
+- **`UringError`** is now a subclass of `OSError` (`errno`, `strerror`, `filename` fields populated). **PEP 561** typing markers (`py.typed`, `__init__.pyi`) published in the wheel.
+- **`UringCtx` lifecycle safety**: `single_thread_check` (default `True`) records the creating thread and raises `UringError` on cross-thread access. All entry points go through `_ring()` so use-after-`close()` raises a clear error.
+- **`BufferPool`** use-after-`close()` raises `UringError`.
+- **High-level helpers** (`copy`, `write`, `write_many`, `copy_path`, `copy_path_dynamic`, `write_newfile`, `write_newfile_dynamic`): `sync_policy` parameter (`"none"` / `"data"` / `"end"`), `progress_cb(done_bytes, total_bytes) -> bool` for cooperative cancel and throttling.
+- **Probe cache**: `get_probe_info()`, `opcode_supported()`, `require_opcode_supported()` in `pyuring.capabilities`; result cached per-process.
+- **Examples** (`examples/`): `asyncio/`, `fastapi/`, and `pytorch/` each with `before/` and `after/` showing the usual pattern vs pyuring; `README.md` documents how to run them.
+- **Documentation** fully rewritten in English under `docs/`: `USAGE.md` (full API reference), `INSTALLATION.md`, `BENCHMARKS.md`, `TESTING.md`.
+
+### Changed
+
+- `pyproject.toml`: skip `*_i686` and `*-musllinux*` wheel builds; use `manylinux_2_28` images.
+- `setup.py`: remove Python 3.6/3.7 classifiers (incompatible with `python_requires=">=3.8"`); add 3.12, `Operating System :: POSIX :: Linux`.
+
 ## [0.2.0] - 2026-04-08
 
 PyPI release **0.2.0** (semver minor). Functionality and documentation are as summarized under **[0.1.3]** below; this tag is the recommended install target for **`pip install pyuring`**.

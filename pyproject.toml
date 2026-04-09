@@ -5,7 +5,7 @@ build-backend = "setuptools.build_meta"
 [tool.cibuildwheel]
 build-frontend = "build"
 # manylinux glibc only; musllinux needs a validated liburing build on Alpine (see docs/INSTALLATION.md).
-skip = "*-musllinux*"
+skip = "*-musllinux* *_i686"
 test-command = "python -c \"import pyuring; assert pyuring.__version__\""
 
 [tool.cibuildwheel.linux]

@@ -1,0 +1,41 @@
+# TODO
+
+## 긴급 (안전성 / 배포 차단)
+
+- [ ] 버퍼 lifetime 자동 관리: `read_async` / `write_async` 완료 전까지 내부에서 버퍼 reference 유지 (현재 사용자가 직접 관리하지 않으면 커널이 해제된 메모리에 쓸 수 있음)
+- [ ] aarch64 wheel 빌드: AWS Graviton / Ampere / RPi 대응 (`manylinux_2_28_aarch64`, cibuildwheel QEMU or ARM runner)
+- [ ] sdist PyPI 업로드: Alpine / 비표준 glibc 환경 fallback 소스 설치 지원
+- [ ] GitHub Actions CI 복구: PR마다 lint + test (ubuntu/debian/fedora matrix) + wheel build + publish-on-tag 파이프라인
+
+## 고우선순위 (채택 허들 제거)
+
+- [ ] `aiofiles` 호환 고수준 async 파일 API: `async with pyuring.open(path, "rb") as f: data = await f.read()` — 기존 코드에서 import 한 줄 교체만으로 pyuring 사용 가능하게
+- [ ] Graceful fallback: io_uring 불가 환경(구형 커널, seccomp 제한 컨테이너, WSL1)에서 `asyncio.run_in_executor` 기반으로 자동 전환, 동일 인터페이스 유지
+- [ ] 커널 버전별 기능 매트릭스 문서화: 각 opcode / setup flag별 최소 커널 버전 표로 정리
+- [ ] 리소스 누수 감지: `UringCtx` / `BufferPool` `close()` 없이 GC될 때 `warnings.warn` 출력
+- [ ] 에러 메시지 개선: `UringError`에 path / offset / buf_len 포함 — 현재 operation 이름만 있음
+
+## 중우선순위 (성능 차별화)
+
+- [ ] SQPOLL 모드 정식 지원: `UringCtx(mode="sqpoll")` preset — 커널 스레드가 SQ polling, submit 시 syscall 0 (레이턴시 10µs → 2µs급 워크로드 대응)
+- [ ] 제공 버퍼 링 고수준 API: `BufferRing` 클래스 — `IORING_OP_PROVIDE_BUFFERS` + buffer ring으로 zero-copy recv, 현재 `provide_buffers`는 있으나 사용하기 어려운 저수준 인터페이스만 존재
+- [ ] Multishot accept / recv async 인터페이스: `async for conn_fd in ctx.accept_multishot(server_fd)` — C 구현은 있으나 async 래퍼 없음
+- [ ] `sendfile` 고수준 API: splice 기반 zero-copy 파일→소켓 전송 (`await pyuring.sendfile(writer, fd, count)`)
+- [ ] `DEFER_TASKRUN + SINGLE_ISSUER` preset: 커널 6.1+ asyncio 레이턴시 최적화, `UringCtx(mode="latency")` 로 노출
+- [ ] 멀티스레드 multi-ring 지원: thread-per-core 패턴용 `UringPool` — 각 스레드가 자신의 ring 소유, 현재 `single_thread_check` 때문에 멀티스레드 서버에서 사용 불가
+
+## 중기 (생태계 / DX)
+
+- [ ] pytest 플러그인 (`pytest-pyuring`): `uring_ctx` fixture 제공, 테스트 작성 편의성 향상
+- [ ] 타입 스텁 완성: `UringCtx` 전체 메서드 mypy / pyright strict 통과
+- [ ] `pip install pyuring[dev]` / `pyuring[bench]` extras 정의
+- [ ] 벤치마크 CI regression 감지: PR마다 examples/ 벤치마크 실행, 임계값 대비 성능 퇴보 시 fail
+- [ ] aiohttp / Starlette / FastAPI 정적 파일 미들웨어 예제 또는 플러그인
+- [ ] Django Channels / asyncpg 연동 가이드 문서화
+- [ ] ReadTheDocs 또는 GitHub Pages 문서 사이트 구축
+
+## 장기 (대형 목표)
+
+- [ ] asyncio event loop policy 교체: `pyuring.install()` 한 줄로 asyncio 파일 I/O 전체를 io_uring으로 교체 — 기존 코드 무수정 채택 (uvloop 방식)
+- [ ] Python 3.13 free-threaded (nogil) 지원: GIL 없는 multi-ring 패턴 검증 및 wheel 빌드
+- [ ] io_uring NVMe passthrough: `IORING_OP_URING_CMD` + NVMe SSD 직접 제어 — 데이터베이스 엔진 수준 스토리지 I/O
