@@ -1,3 +1,7 @@
+<div align="center">
+  <img src="logo.png" alt="pyuring" width="420" />
+</div>
+
 # pyuring
 
 Python bindings for file I/O using the Linux [**io_uring**](https://kernel.dk/io_uring.pdf) interface. Operations are submitted through a shared ring buffer, reducing per-call syscall overhead for concurrent or batched workloads.
