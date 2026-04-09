@@ -19,7 +19,7 @@ Do not run the tests from a directory where `import pyuring` would resolve to an
 
 ## Test coverage
 
-The `tests/` directory contains 23 test files. Each one covers a specific area of the library.
+The `tests/` directory contains 24 test files. Each one covers a specific area of the library.
 
 | Test file | What it covers |
 |-----------|----------------|
@@ -32,6 +32,7 @@ The `tests/` directory contains 23 test files. Each one covers a specific area o
 | `test_regression_cancel_timeout_peek` | asyncio task cancellation during `wait_completion`; `peek_completion` when queue is empty; timeout SQE submission. |
 | `test_buffer_pool` | `BufferPool.create`, `get`, `get_ptr`, `resize`, `set_size`, `close`, use-after-close. |
 | `test_read_write_helpers` | `UringCtx.read`, `write`, `read_batch`, `read_offsets`. |
+| `test_async_buffer_pin` | `read_async`/`write_async` buffer pinning until CQE; duplicate `user_data` raises. |
 | `test_vectors_io` | `readv` / `writev` (scatter-gather). |
 | `test_vectors_fixed_io` | `read_fixed` / `write_fixed` with registered buffers. |
 | `test_register_fixed_io` | `register_files`, `unregister_files`, `register_buffers`, `unregister_buffers`. |

@@ -30,8 +30,11 @@ class UringAsync:
     **Threading:** Use only from the thread that runs that loop. The underlying
     :class:`UringCtx` is not thread-safe; do not share it across threads.
 
-    **Buffers:** Keep memory referenced by submitted ``read_async`` / ``write_async``
-    operations alive until the matching completion is returned from :meth:`wait_completion`.
+    **Buffers:** For :meth:`~pyuring.native.uring_ctx.UringCtx.read_async` /
+    :meth:`~pyuring.native.uring_ctx.UringCtx.write_async` (non-``*_ptr``), the
+    :class:`~pyuring.native.uring_ctx.UringCtx` pins buffer objects until the
+    matching CQE is returned from :meth:`wait_completion` or :meth:`~pyuring.native.uring_ctx.UringCtx.peek_completion`.
+    Raw-pointer submissions still require the caller to keep memory valid.
 
     **Lifecycle:** Call :meth:`close` when done, or use ``async with UringAsync(ctx)``.
     Closing does not call :meth:`UringCtx.close` on the context object.

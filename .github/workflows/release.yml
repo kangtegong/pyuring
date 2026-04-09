@@ -1,0 +1,81 @@
+# On version tags: build sdist + manylinux wheels (x86_64 + aarch64), upload to PyPI.
+# Configure either PyPI "trusted publisher" (OIDC, recommended) for this workflow, or
+# set repository secret PYPI_API_TOKEN and add `with: password: ${{ secrets.PYPI_API_TOKEN }}`
+# to the publish step below.
+
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: read
+
+jobs:
+  build_sdist:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Build sdist
+        run: |
+          python -m pip install --upgrade pip build
+          python -m build --sdist --outdir dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist/*.tar.gz
+
+  build_wheels:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-qemu-action@v3
+        with:
+          platforms: arm64
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cibuildwheel
+        run: python -m pip install --upgrade pip cibuildwheel
+
+      - name: Build wheels (manylinux x86_64 + aarch64)
+        env:
+          CIBW_ARCHS_LINUX: x86_64 aarch64
+        run: python -m cibuildwheel --output-dir wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: dist-wheels
+          path: wheelhouse/*.whl
+
+  publish:
+    needs: [build_sdist, build_wheels]
+    runs-on: ubuntu-latest
+    permissions:
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-sdist
+          path: dist
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: dist-wheels
+          path: dist
+
+      # Trusted publishing (OIDC): no token. Or set PYPI_API_TOKEN and uncomment:
+      # with:
+      #   password: ${{ secrets.PYPI_API_TOKEN }}
+      - name: Publish to PyPI
+        uses: pypa/gh-action-pypi-publish@release/v1

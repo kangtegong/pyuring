@@ -12,6 +12,8 @@
 - **Probe cache**: `get_probe_info()`, `opcode_supported()`, `require_opcode_supported()` in `pyuring.capabilities`; result cached per-process.
 - **Examples** (`examples/`): `asyncio/`, `fastapi/`, and `pytorch/` each with `before/` and `after/` showing the usual pattern vs pyuring; `README.md` documents how to run them.
 - **Documentation** fully rewritten in English under `docs/`: `USAGE.md` (full API reference), `INSTALLATION.md`, `BENCHMARKS.md`, `TESTING.md`.
+- **`read_async` / `write_async`** (non-``*_ptr``): `UringCtx` keeps buffer objects until the matching completion is consumed; duplicate `user_data` while an operation is in flight raises `ValueError`.
+- **Packaging / CI**: GitHub Actions — `CI` workflow (compileall, Ubuntu tests, Docker matrix Debian/Fedora, cibuildwheel smoke wheel); `Release` workflow on `v*` tags builds **sdist** + **manylinux** `x86_64` and `aarch64` wheels (QEMU for ARM on x86 runners) and publishes to PyPI. `pyproject.toml`: `manylinux_2_28` for `aarch64` / PyPy aarch64.
 
 ### Changed
 

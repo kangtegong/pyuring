@@ -222,7 +222,9 @@ ctx.read_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)
 ctx.write_async_ptr(fd, buf_ptr, buf_len, offset=0, user_data=0)
 ```
 
-`user_data` is an arbitrary integer you assign at submission time. It is returned unchanged in the completion, so you can correlate completions with submissions.
+For `read_async` / `write_async` with `bytes`/`bytearray`, the context keeps the buffer referenced until that operation’s CQE is consumed (`wait_completion` / `peek_completion`). For `read_async_ptr` / `write_async_ptr`, you must keep the memory valid until then. Each in-flight `read_async`/`write_async` (non-ptr) must use a **distinct** `user_data` among operations not yet completed.
+
+`user_data` is returned unchanged in the completion so you can correlate completions with submissions.
 
 **Flushing the submission queue:**
 

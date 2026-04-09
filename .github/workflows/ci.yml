@@ -1,0 +1,74 @@
+# Lint, tests (Ubuntu native + Docker matrix: Debian/Fedora), wheel smoke build.
+
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Syntax check (compileall)
+        run: python -m compileall -q pyuring tests
+
+  test-ubuntu:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build deps
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq build-essential python3 python3-pip liburing-dev make
+
+      - name: Build and test
+        run: |
+          make
+          PYTHONPATH=. python3 -m unittest discover -s tests -v
+
+  test-docker-matrix:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Docker test matrix (Ubuntu / Debian / Fedora)
+        run: |
+          chmod +x scripts/docker-test-matrix.sh
+          BASE_IMAGES="ubuntu:22.04 debian:bookworm-slim fedora:40" ./scripts/docker-test-matrix.sh
+
+  wheel-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install cibuildwheel
+        run: python -m pip install --upgrade pip cibuildwheel
+
+      - name: Build one manylinux x86_64 wheel (smoke)
+        env:
+          CIBW_BUILD: cp312-manylinux_x86_64
+          CIBW_ARCHS_LINUX: x86_64
+        run: python -m cibuildwheel --output-dir wheelhouse
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: wheel-smoke-cp312-manylinux_x86_64
+          path: wheelhouse/*.whl

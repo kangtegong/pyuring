@@ -7,7 +7,7 @@ import gc
 import mmap
 import os
 import threading
-from typing import Any, List, Optional, Sequence, Tuple, Union
+from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from ctypes import (
     CFUNCTYPE,
     POINTER,
@@ -53,6 +53,8 @@ class UringCtx:
 
         self._lib = ctypes.CDLL(lib_path)
         self._buffer_keepalive: List[Any] = []
+        # read_async / write_async (non-ptr): keep buffer objects until a CQE is reaped.
+        self._async_io_keepalive: Dict[int, Any] = {}
 
         self._lib.uring_create.argtypes = [c_uint]
         self._lib.uring_create.restype = c_void_p
@@ -1297,6 +1299,7 @@ class UringCtx:
     def close(self) -> None:
         """Close the io_uring context."""
         self._buffer_keepalive.clear()
+        self._async_io_keepalive.clear()
         ctx = getattr(self, "_ctx", None)
         if ctx:
             self._lib.uring_destroy(ctx)
@@ -1364,26 +1367,42 @@ class UringCtx:
     # Asynchronous API
     # ========================================================================
 
+    def _track_async_io_buffer(self, user_data: int, keepalive: Any) -> None:
+        """Pin *keepalive* until *user_data* is returned from wait/peek completion."""
+        if user_data in self._async_io_keepalive:
+            raise ValueError(
+                f"user_data={user_data!r} is already in use by an in-flight read_async/write_async; "
+                "use a unique tag until the completion is consumed."
+            )
+        self._async_io_keepalive[user_data] = keepalive
+
+    def _completion_release_async_io_buffer(self, user_data: int) -> None:
+        self._async_io_keepalive.pop(int(user_data), None)
+
     def read_async(self, fd: int, buf, offset: int = 0, user_data: int = 0) -> int:
         """
         Submit an asynchronous read operation.
 
+        For ``bytes``/``bytearray``, the context keeps a reference to the buffer
+        until this operation's completion is reaped (see :meth:`wait_completion`).
+        Tuple ``(ptr, size)`` is delegated to :meth:`read_async_ptr` — the caller
+        must keep that memory valid until completion.
+
         Args:
             fd: File descriptor
-            buf: Buffer to read into. Can be:
-                - bytes/bytearray: will be used directly
-                - tuple (ptr, size): from BufferPool.get_ptr()
+            buf: Buffer to read into: ``bytes``/``bytearray``, or tuple ``(ptr, size)``
+                from ``BufferPool.get_ptr()``.
             offset: File offset
-            user_data: User data tag to identify this operation (default: 0)
+            user_data: Tag returned in the completion; must be **unique among all
+                in-flight** ``read_async``/``write_async`` (non-ptr) operations.
 
         Returns:
-            user_data tag on success, raises UringError on error
+            ``user_data`` on success, raises UringError on error
         """
         if isinstance(buf, tuple) and len(buf) == 2:
-            # Tuple from BufferPool.get_ptr() - use read_async_ptr instead
+            # Tuple from BufferPool.get_ptr() — caller keeps the pool/slabs alive; use read_async_ptr.
             return self.read_async_ptr(fd, buf[0], buf[1], offset, user_data)
         elif isinstance(buf, (bytes, bytearray)):
-            # Create a mutable buffer
             if isinstance(buf, bytes):
                 buf = bytearray(buf)
             buf_ptr = (ctypes.c_char * len(buf)).from_buffer(buf)
@@ -1393,6 +1412,7 @@ class UringCtx:
 
         ret = self._lib.uring_read_async(self._ring(), fd, buf_ptr, buf_len, offset, user_data)
         _raise_for_neg_errno(ret, "uring_read_async")
+        self._track_async_io_buffer(user_data, buf)
         return int(ret)
 
     def read_async_ptr(self, fd: int, buf_ptr: ctypes.c_void_p, buf_len: int, offset: int = 0, user_data: int = 0) -> int:
@@ -1422,14 +1442,17 @@ class UringCtx:
         """
         Submit an asynchronous write operation.
 
+        Keeps *data* referenced until the completion for this ``user_data`` is reaped.
+
         Args:
             fd: File descriptor
-            data: Data to write (bytes or bytearray)
+            data: Data to write (``bytes`` or ``bytearray``)
             offset: File offset
-            user_data: User data tag to identify this operation (default: 0)
+            user_data: Tag returned in the completion; must be **unique among all
+                in-flight** ``read_async``/``write_async`` (non-ptr) operations.
 
         Returns:
-            user_data tag on success, raises UringError on error
+            ``user_data`` on success, raises UringError on error
         """
         if not isinstance(data, (bytes, bytearray)):
             raise TypeError("data must be bytes or bytearray")
@@ -1438,6 +1461,7 @@ class UringCtx:
         buf_ptr = ctypes.c_char_p(data) if isinstance(data, bytes) else (ctypes.c_char * len(data)).from_buffer(data)
         ret = self._lib.uring_write_async(self._ring(), fd, buf_ptr, len(data), offset, user_data)
         _raise_for_neg_errno(ret, "uring_write_async")
+        self._track_async_io_buffer(user_data, data)
         return int(ret)
 
     def write_async_ptr(self, fd: int, buf_ptr: ctypes.c_void_p, buf_len: int, offset: int = 0, user_data: int = 0) -> int:
@@ -1479,7 +1503,9 @@ class UringCtx:
         result = c_int()
         ret = self._lib.uring_wait_completion(self._ring(), byref(user_data), byref(result))
         _raise_for_neg_errno(ret, "uring_wait_completion")
-        return (int(user_data.value), int(result.value))
+        ud = int(user_data.value)
+        self._completion_release_async_io_buffer(ud)
+        return (ud, int(result.value))
 
     def peek_completion(self) -> Optional[Tuple[int, int]]:
         """
@@ -1499,7 +1525,9 @@ class UringCtx:
         if ret == 0:
             return None  # No completion available
         _raise_for_neg_errno(ret, "uring_peek_completion")
-        return (int(user_data.value), int(result.value))
+        ud = int(user_data.value)
+        self._completion_release_async_io_buffer(ud)
+        return (ud, int(result.value))
 
     def submit(self) -> int:
         """
