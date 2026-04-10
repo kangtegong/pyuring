@@ -10,14 +10,6 @@ Technical backlog for pyuring. Not a release guarantee; items may be reordered o
 - [ ] Warn on resource leaks: if `UringCtx` / `BufferPool` is GC’d without `close()`, emit `warnings.warn`.
 - [ ] Richer `UringError`: include path / offset / buffer length where applicable (not only operation name).
 
-## Ecosystem and docs
-
-- [ ] `pytest-pyuring` plugin: `uring_ctx` fixture and helpers for tests.
-- [ ] Complete type stubs: `UringCtx` and public API pass strict mypy/pyright.
-- [ ] Optional extras: `pip install pyuring[dev]`, `pyuring[bench]`.
-- [ ] Optional benchmark regression job in CI (examples or dedicated bench; threshold-based failure is tricky and needs tuning).
-- [ ] Examples or middleware patterns for aiohttp / Starlette / FastAPI static file paths.
-
 ## Longer-term / exploratory
 
 - [ ] Optional asyncio loop integration: e.g. `pyuring.install()` to route file I/O through io_uring where possible (similar idea to uvloop; large design space).

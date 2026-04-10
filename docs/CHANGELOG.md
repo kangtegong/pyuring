@@ -1,5 +1,15 @@
 # Changelog
 
+## [0.3.2] - 2026-04-11
+
+### Added
+
+- **Ring presets:** ``UringCtx.with_sqpoll`` and ``UringCtx.with_defer_taskrun`` for common ``IORING_SETUP_*`` combinations; module ``pyuring.ring_presets`` (flag helpers and keyword dicts).
+- **`BufferRing`:** contiguous slab + `provide_buffers` for buffer groups; **`UringPool`:** fixed pool of independent `UringCtx` instances.
+- **Submit helpers (asyncio-friendly):** C + Python — ``multishot_accept_submit``, ``recv_multishot_buffer_group_submit``, ``splice_submit`` (submit without blocking; reap via ``wait_completion`` / ``UringAsync``).
+- **asyncio:** ``sendfile_splice`` (splice loop, e.g. file → pipe/socket) and ``iter_multishot_accept`` (async iterator over multishot accept completions).
+- **Tests:** ``tests/test_todo_ring_features.py`` (presets, BufferRing, pool, splice/async cases; skips when the kernel rejects a setup flag or multishot accept).
+
 ## [0.3.1] - 2026-04-10
 
 ### Fixed

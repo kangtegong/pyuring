@@ -23,7 +23,7 @@ pip install pyuring
 
 On glibc x86\_64 Linux, pip installs a manylinux wheel that includes a pre-built `liburingwrap.so` — no separate liburing package is needed. For other platforms or source builds, see [docs/INSTALLATION.md](docs/INSTALLATION.md).
 
-**Documentation site:** [kangtegong.github.io/pyuring](https://kangtegong.github.io/pyuring/) (MkDocs, deployed from `docs/` via GitHub Actions). Local preview: `pip install -r requirements-docs.txt && mkdocs serve`. **Enable once:** repository **Settings → Pages → Source: GitHub Actions** (not “Deploy from branch”).
+**Docs:** [kangtegong.github.io/pyuring](https://kangtegong.github.io/pyuring/)
 
 ## What pyuring provides
 
