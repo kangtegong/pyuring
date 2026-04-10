@@ -29,6 +29,7 @@ from pyuring._easy import (
     write_many,
 )
 from pyuring.aio import UringAsync, iter_multishot_accept, sendfile_splice, wait_completion_in_executor
+from pyuring.async_file import AsyncFile, async_open, open
 from pyuring.buffer_ring import BufferRing
 from pyuring.pool import UringPool
 from pyuring.capabilities import (
@@ -48,7 +49,7 @@ for _name in UAPI_CONSTANT_NAMES:
     globals()[_name] = getattr(_native, _name)
 del _name, _native
 
-__version__ = "0.3.2"
+__version__ = "0.3.3"
 
 
 class _DirectBindings(object):
@@ -105,6 +106,9 @@ __all__ = (
         "get_probe_info",
         "opcode_supported",
         "require_opcode_supported",
+        "AsyncFile",
+        "open",
+        "async_open",
     ]
     + list(UAPI_CONSTANT_NAMES)
 )

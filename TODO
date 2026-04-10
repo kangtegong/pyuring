@@ -2,14 +2,6 @@
 
 Technical backlog for pyuring. Not a release guarantee; items may be reordered or dropped.
 
-## API and usability
-
-- [ ] High-level async file API compatible with `aiofiles`-style usage, e.g. `async with pyuring.open(path, "rb") as f: data = await f.read()` so adoption can be a small import/surface change.
-- [ ] Graceful fallback when io_uring is unavailable (old kernel, seccomp-restricted containers, WSL1): same interface backed by `asyncio.run_in_executor`.
-- [ ] Document kernel requirements: matrix of opcodes / setup flags vs minimum kernel version.
-- [ ] Warn on resource leaks: if `UringCtx` / `BufferPool` is GC’d without `close()`, emit `warnings.warn`.
-- [ ] Richer `UringError`: include path / offset / buffer length where applicable (not only operation name).
-
 ## Longer-term / exploratory
 
 - [ ] Optional asyncio loop integration: e.g. `pyuring.install()` to route file I/O through io_uring where possible (similar idea to uvloop; large design space).

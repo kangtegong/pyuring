@@ -6,7 +6,9 @@ import errno
 import gc
 import mmap
 import os
+import sys
 import threading
+import warnings
 from typing import Any, Dict, List, Optional, Sequence, Tuple, Union
 from ctypes import (
     CFUNCTYPE,
@@ -541,7 +543,7 @@ class UringCtx:
     def openat(self, path: str, flags: int, mode: int = 0o644, *, dir_fd: int = AT_FDCWD) -> int:
         """IORING_OP_OPENAT: returns new file descriptor."""
         ret = self._lib.uring_openat_sync(self._ring(), int(dir_fd), path.encode(), int(flags), int(mode) & 0xFFFFFFFF)
-        _raise_for_neg_errno(ret, "uring_openat_sync")
+        _raise_for_neg_errno(ret, "uring_openat_sync", filename=path)
         return int(ret)
 
     def close_fd(self, fd: int) -> None:
@@ -1420,6 +1422,17 @@ class UringCtx:
     def __exit__(self, exc_type, exc, tb):
         self.close()
 
+    def __del__(self) -> None:
+        if sys.is_finalizing():
+            return
+        if getattr(self, "_ctx", None) is not None:
+            warnings.warn(
+                "UringCtx was garbage-collected without close(); native ring resources may leak",
+                ResourceWarning,
+                stacklevel=2,
+                source=self,
+            )
+
     @property
     def ring_fd(self) -> int:
         """Kernel fd for this ring's completion side (poll/epoll, :mod:`asyncio` ``add_reader``)."""
@@ -1431,14 +1444,15 @@ class UringCtx:
         """Read data from a file descriptor using io_uring."""
         buf = ctypes.create_string_buffer(length)
         ret = self._lib.uring_read_sync(self._ring(), fd, ctypes.byref(buf), length, offset)
-        _raise_for_neg_errno(ret, "uring_read_sync")
+        _raise_for_neg_errno(ret, "uring_read_sync", offset=offset, length=length)
         return buf.raw[:ret]
 
     def write(self, fd: int, data: bytes, offset: int = 0) -> int:
         """Write data to a file descriptor using io_uring."""
         buf = ctypes.create_string_buffer(data, len(data))
-        ret = self._lib.uring_write_sync(self._ring(), fd, ctypes.byref(buf), len(data), offset)
-        _raise_for_neg_errno(ret, "uring_write_sync")
+        ln = len(data)
+        ret = self._lib.uring_write_sync(self._ring(), fd, ctypes.byref(buf), ln, offset)
+        _raise_for_neg_errno(ret, "uring_write_sync", offset=offset, length=ln)
         return int(ret)
 
     def read_batch(self, fd: int, block_size: int, blocks: int, offset: int = 0) -> bytes:
@@ -1518,7 +1532,7 @@ class UringCtx:
             raise TypeError(f"buf must be bytes, bytearray, or tuple (ptr, size), got {type(buf)}")
 
         ret = self._lib.uring_read_async(self._ring(), fd, buf_ptr, buf_len, offset, user_data)
-        _raise_for_neg_errno(ret, "uring_read_async")
+        _raise_for_neg_errno(ret, "uring_read_async", offset=offset, length=buf_len)
         self._track_async_io_buffer(user_data, buf)
         return int(ret)
 
@@ -1542,7 +1556,7 @@ class UringCtx:
             buf_ptr = ctypes.c_void_p(buf_ptr)
 
         ret = self._lib.uring_read_async(self._ring(), fd, buf_ptr, buf_len, offset, user_data)
-        _raise_for_neg_errno(ret, "uring_read_async")
+        _raise_for_neg_errno(ret, "uring_read_async", offset=offset, length=buf_len)
         return int(ret)
 
     def write_async(self, fd: int, data: bytes, offset: int = 0, user_data: int = 0) -> int:
@@ -1566,8 +1580,9 @@ class UringCtx:
 
         # For write, we can use c_char_p since we're not modifying the data
         buf_ptr = ctypes.c_char_p(data) if isinstance(data, bytes) else (ctypes.c_char * len(data)).from_buffer(data)
-        ret = self._lib.uring_write_async(self._ring(), fd, buf_ptr, len(data), offset, user_data)
-        _raise_for_neg_errno(ret, "uring_write_async")
+        ln = len(data)
+        ret = self._lib.uring_write_async(self._ring(), fd, buf_ptr, ln, offset, user_data)
+        _raise_for_neg_errno(ret, "uring_write_async", offset=offset, length=ln)
         self._track_async_io_buffer(user_data, data)
         return int(ret)
 
@@ -1591,7 +1606,7 @@ class UringCtx:
             buf_ptr = ctypes.c_void_p(buf_ptr)
 
         ret = self._lib.uring_write_async(self._ring(), fd, buf_ptr, buf_len, offset, user_data)
-        _raise_for_neg_errno(ret, "uring_write_async")
+        _raise_for_neg_errno(ret, "uring_write_async", offset=offset, length=buf_len)
         return int(ret)
 
     def wait_completion(self) -> Tuple[int, int]:

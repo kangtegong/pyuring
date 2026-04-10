@@ -1,5 +1,22 @@
 # Changelog
 
+## [0.3.3] - 2026-04-12
+
+### Added
+
+- **High-level async files:** ``pyuring.open`` / ``async_open`` and class ``AsyncFile`` — ``async with pyuring.open(path, "rb") as f: await f.read()`` with binary modes only; io_uring path uses ``read_async`` / ``write_async`` + ``UringAsync``; **threaded fallback** via ``builtins.open`` + ``run_in_executor`` when ``prefer_uring=False`` or ring creation fails after ``os.open``.
+- **``UringError`` context:** optional ``filename``, ``offset``, and ``length`` on errors; wired through ``openat``, sync read/write, async read/write, and async file I/O.
+- **`ResourceWarning`** if ``UringCtx`` or ``BufferPool`` is finalized without ``close()`` (skipped during interpreter shutdown).
+
+### Changed
+
+- **``AsyncFile``:** serialized I/O with ``asyncio.Lock``; POSIX-style ``read(n)`` (short reads / EOF loops); completion **``user_data``** checked against the submitted operation; mode validation against allowed binary spellings; ``Executor``-typed optional executor.
+- **Docs:** opcode / setup-flag notes in ``docs/SUPPORT.md``.
+
+### Tests
+
+- ``tests/test_api_usability.py`` — async file roundtrip, fallback, partial reads, invalid mode, leak warning, ``UringError`` fields.
+
 ## [0.3.2] - 2026-04-11
 
 ### Added

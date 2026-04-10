@@ -3,6 +3,8 @@ from __future__ import annotations
 
 import ctypes
 import errno
+import sys
+import warnings
 from ctypes import POINTER, byref, c_int, c_uint, c_void_p
 from typing import Tuple
 
@@ -100,4 +102,15 @@ class BufferPool:
 
     def __exit__(self, exc_type, exc, tb):
         self.close()
+
+    def __del__(self) -> None:
+        if sys.is_finalizing():
+            return
+        if getattr(self, "_pool", None) is not None:
+            warnings.warn(
+                "BufferPool was garbage-collected without close(); native pool memory may leak",
+                ResourceWarning,
+                stacklevel=2,
+                source=self,
+            )
 

@@ -7,6 +7,9 @@ from pyuring.aio import UringAsync as UringAsync
 from pyuring.aio import iter_multishot_accept as iter_multishot_accept
 from pyuring.aio import sendfile_splice as sendfile_splice
 from pyuring.aio import wait_completion_in_executor as wait_completion_in_executor
+from pyuring.async_file import AsyncFile as AsyncFile
+from pyuring.async_file import async_open as async_open
+from pyuring.async_file import open as open
 from pyuring.buffer_ring import BufferRing as BufferRing
 from pyuring.native.errors import UringError as UringError
 from pyuring.pool import UringPool as UringPool
