@@ -1,12 +1,16 @@
 """Type stubs for pyuring package exports."""
 from __future__ import annotations
 
-from typing import Any, Callable, Final, Literal, Optional
-
-from pyuring.native.errors import UringError as UringError
+from typing import Any, AsyncIterator, Callable, Final, Literal, Optional
 
 from pyuring.aio import UringAsync as UringAsync
+from pyuring.aio import iter_multishot_accept as iter_multishot_accept
+from pyuring.aio import sendfile_splice as sendfile_splice
 from pyuring.aio import wait_completion_in_executor as wait_completion_in_executor
+from pyuring.buffer_ring import BufferRing as BufferRing
+from pyuring.native.errors import UringError as UringError
+from pyuring.pool import UringPool as UringPool
+import pyuring.ring_presets as ring_presets
 
 CopySyncPolicy = Literal["default", "none", "end"]
 WriteSyncPolicy = Literal["default", "none", "end", "data", "end_and_data"]
@@ -107,6 +111,24 @@ def write_manyfiles(
     qd: int = ...,
     fsync_end: bool = ...,
 ) -> int: ...
+
+async def sendfile_splice(
+    ua: UringAsync,
+    file_fd: int,
+    sock_fd: int,
+    *,
+    offset: int = ...,
+    count: Optional[int] = ...,
+    chunk: int = ...,
+    user_data: int = ...,
+) -> int: ...
+async def iter_multishot_accept(
+    ua: UringAsync,
+    listen_fd: int,
+    *,
+    flags: int = ...,
+    user_data: int = ...,
+) -> AsyncIterator[int]: ...
 
 class _DirectBindings:
     UringError: type[UringError]

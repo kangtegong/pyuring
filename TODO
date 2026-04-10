@@ -10,15 +10,6 @@ Technical backlog for pyuring. Not a release guarantee; items may be reordered o
 - [ ] Warn on resource leaks: if `UringCtx` / `BufferPool` is GC’d without `close()`, emit `warnings.warn`.
 - [ ] Richer `UringError`: include path / offset / buffer length where applicable (not only operation name).
 
-## Performance and features
-
-- [ ] First-class SQPOLL preset on `UringCtx` (kernel thread SQ polling; fewer syscalls on submit for latency-sensitive workloads).
-- [ ] High-level buffer ring API (`BufferRing`): `IORING_OP_PROVIDE_BUFFERS` + buffer ring for zero-copy recv; today only low-level `provide_buffers` exists.
-- [ ] Async wrappers for multishot accept/recv (C side exists; Python/async ergonomics missing).
-- [ ] High-level `sendfile`-style API: splice-based file→socket zero-copy (`await pyuring.sendfile(...)`).
-- [ ] Preset combining `DEFER_TASKRUN` + `SINGLE_ISSUER` for kernel 6.1+ asyncio latency tuning.
-- [ ] Multi-ring / pool story for thread-per-core servers (`UringPool` or equivalent); today `single_thread_check` blocks naive multi-thread sharing.
-
 ## Ecosystem and docs
 
 - [ ] `pytest-pyuring` plugin: `uring_ctx` fixture and helpers for tests.
@@ -26,8 +17,6 @@ Technical backlog for pyuring. Not a release guarantee; items may be reordered o
 - [ ] Optional extras: `pip install pyuring[dev]`, `pyuring[bench]`.
 - [ ] Optional benchmark regression job in CI (examples or dedicated bench; threshold-based failure is tricky and needs tuning).
 - [ ] Examples or middleware patterns for aiohttp / Starlette / FastAPI static file paths.
-- [ ] Guide notes for Django Channels / asyncpg integration patterns.
-- [ ] Hosted docs (Read the Docs or GitHub Pages).
 
 ## Longer-term / exploratory
 

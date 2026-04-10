@@ -28,7 +28,9 @@ from pyuring._easy import (
     write,
     write_many,
 )
-from pyuring.aio import UringAsync, wait_completion_in_executor
+from pyuring.aio import UringAsync, iter_multishot_accept, sendfile_splice, wait_completion_in_executor
+from pyuring.buffer_ring import BufferRing
+from pyuring.pool import UringPool
 from pyuring.capabilities import (
     IO_URING_KERNEL_DOC,
     LIBURING_PROJECT,
@@ -37,6 +39,8 @@ from pyuring.capabilities import (
     opcode_supported,
     require_opcode_supported,
 )
+
+import pyuring.ring_presets as ring_presets
 
 import pyuring._native as _native
 
@@ -89,7 +93,12 @@ __all__ = (
         "write_newfile_dynamic",
         "write_manyfiles",
         "UringAsync",
+        "sendfile_splice",
+        "iter_multishot_accept",
         "wait_completion_in_executor",
+        "BufferRing",
+        "UringPool",
+        "ring_presets",
         "IO_URING_KERNEL_DOC",
         "LIBURING_PROJECT",
         "IoUringProbeInfo",

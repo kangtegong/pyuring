@@ -2060,6 +2060,61 @@ int uring_recv_multishot_sync(uring_ctx *ctx, int sockfd, void *buf, size_t len,
   return uring_submit_wait_one(ctx);
 }
 
+// Submit-only helpers for asyncio / multishot (caller waits via ring_fd + wait_completion).
+long long uring_multishot_accept_submit(uring_ctx *ctx, int fd, int flags, uint64_t user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_multishot_accept(sqe, fd, NULL, NULL, flags);
+  sqe->user_data = user_data;
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+  return (long long)user_data;
+}
+
+long long uring_recv_multishot_buf_group_submit(uring_ctx *ctx, int fd, unsigned int bgid, int msg_flags,
+                                                  uint64_t user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_recv_multishot(sqe, fd, NULL, 0, msg_flags);
+  io_uring_sqe_set_buf_group(sqe, (int)bgid);
+  sqe->user_data = user_data;
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+  return (long long)user_data;
+}
+
+long long uring_splice_submit(uring_ctx *ctx, int fd_in, int64_t off_in, int fd_out, int64_t off_out,
+                             unsigned int nbytes, unsigned int splice_flags, uint64_t user_data) {
+  if (!ctx) {
+    return -EINVAL;
+  }
+  struct io_uring_sqe *sqe = io_uring_get_sqe(&ctx->ring);
+  if (!sqe) {
+    return -EAGAIN;
+  }
+  io_uring_prep_splice(sqe, fd_in, off_in, fd_out, off_out, nbytes, splice_flags);
+  sqe->user_data = user_data;
+  int ret = io_uring_submit(&ctx->ring);
+  if (ret < 0) {
+    return ret;
+  }
+  return (long long)user_data;
+}
+
 int uring_send_zc_sync(uring_ctx *ctx, int sockfd, const void *buf, size_t len, int msg_flags, unsigned int zc_flags) {
   if (!ctx || (!buf && len > 0)) {
     return -EINVAL;

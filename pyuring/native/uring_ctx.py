@@ -278,6 +278,13 @@ class UringCtx:
         self._lib.uring_write_async.argtypes = [c_void_p, c_int, c_void_p, c_uint, c_longlong, c_uint64]
         self._lib.uring_write_async.restype = c_longlong
 
+        self._lib.uring_multishot_accept_submit.argtypes = [c_void_p, c_int, c_int, c_uint64]
+        self._lib.uring_multishot_accept_submit.restype = c_longlong
+        self._lib.uring_recv_multishot_buf_group_submit.argtypes = [c_void_p, c_int, c_uint, c_int, c_uint64]
+        self._lib.uring_recv_multishot_buf_group_submit.restype = c_longlong
+        self._lib.uring_splice_submit.argtypes = [c_void_p, c_int, c_longlong, c_int, c_longlong, c_uint, c_uint, c_uint64]
+        self._lib.uring_splice_submit.restype = c_longlong
+
         self._lib.uring_wait_completion.argtypes = [c_void_p, POINTER(c_uint64), POINTER(c_int)]
         self._lib.uring_wait_completion.restype = c_int
 
@@ -326,6 +333,54 @@ class UringCtx:
             raise UringError(err, "uring_create_ex", detail=detail)
         self._ctx = ctx
         self._owner_thread_id: Optional[int] = threading.get_ident() if single_thread_check else None
+
+    @classmethod
+    def with_sqpoll(
+        cls,
+        entries: int = 256,
+        *,
+        sq_thread_idle: int = 2000,
+        sq_thread_cpu: int = -1,
+        lib_path: Optional[str] = None,
+        single_thread_check: bool = True,
+        **kwargs: Any,
+    ) -> UringCtx:
+        """
+        Construct a ring with ``IORING_SETUP_SQPOLL`` (kernel SQ polling thread).
+
+        May require privileges on older kernels. On failure, :exc:`UringError` is
+        raised from queue init, same as the normal constructor.
+        """
+        return cls(
+            lib_path=lib_path,
+            entries=entries,
+            setup_flags=IORING_SETUP_SQPOLL,
+            sq_thread_cpu=sq_thread_cpu,
+            sq_thread_idle=sq_thread_idle,
+            single_thread_check=single_thread_check,
+            **kwargs,
+        )
+
+    @classmethod
+    def with_defer_taskrun(
+        cls,
+        entries: int = 64,
+        *,
+        lib_path: Optional[str] = None,
+        single_thread_check: bool = True,
+        **kwargs: Any,
+    ) -> UringCtx:
+        """
+        ``IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN`` — common on 6.1+
+        for single-threaded submit + deferred task work (e.g. asyncio + one issuer).
+        """
+        return cls(
+            lib_path=lib_path,
+            entries=entries,
+            setup_flags=IORING_SETUP_SINGLE_ISSUER | IORING_SETUP_DEFER_TASKRUN,
+            single_thread_check=single_thread_check,
+            **kwargs,
+        )
 
     def _ensure_open(self) -> None:
         if not getattr(self, "_ctx", None):
@@ -593,6 +648,58 @@ class UringCtx:
             int(flags) & 0xFFFFFFFF,
         )
         _raise_for_neg_errno(ret, "uring_splice_sync")
+        return int(ret)
+
+    def splice_submit(
+        self,
+        fd_in: int,
+        off_in: int,
+        fd_out: int,
+        off_out: int,
+        nbytes: int,
+        splice_flags: int = 0,
+        user_data: int = 0,
+    ) -> int:
+        """
+        Submit ``IORING_OP_SPLICE`` without waiting; use :meth:`wait_completion` /
+        :class:`UringAsync` to reap. Suitable for streaming file→socket copies.
+        """
+        ret = self._lib.uring_splice_submit(
+            self._ring(),
+            int(fd_in),
+            int(off_in),
+            int(fd_out),
+            int(off_out),
+            int(nbytes) & 0xFFFFFFFF,
+            int(splice_flags) & 0xFFFFFFFF,
+            c_uint64(int(user_data) & 0xFFFFFFFFFFFFFFFF),
+        )
+        _raise_for_neg_errno(ret, "uring_splice_submit")
+        return int(ret)
+
+    def multishot_accept_submit(self, fd: int, flags: int = 0, user_data: int = 1) -> int:
+        """Submit ``IORING_OP_ACCEPT`` with multishot; each completion yields a new client fd in ``res``."""
+        ret = self._lib.uring_multishot_accept_submit(
+            self._ring(), int(fd), int(flags), c_uint64(int(user_data) & 0xFFFFFFFFFFFFFFFF)
+        )
+        _raise_for_neg_errno(ret, "uring_multishot_accept_submit")
+        return int(ret)
+
+    def recv_multishot_buffer_group_submit(
+        self, fd: int, bgid: int, msg_flags: int = 0, user_data: int = 1
+    ) -> int:
+        """
+        ``recv_multishot`` with buffer selection: requires :meth:`provide_buffers` for *bgid*.
+        Completions carry received length; buffer id is in CQE flags (kernel version dependent).
+        """
+        ret = self._lib.uring_recv_multishot_buf_group_submit(
+            self._ring(),
+            int(fd),
+            int(bgid) & 0xFFFFFFFF,
+            int(msg_flags),
+            c_uint64(int(user_data) & 0xFFFFFFFFFFFFFFFF),
+        )
+        _raise_for_neg_errno(ret, "uring_recv_multishot_buf_group_submit")
         return int(ret)
 
     def tee(self, fd_in: int, fd_out: int, nbytes: int, flags: int = 0) -> int:

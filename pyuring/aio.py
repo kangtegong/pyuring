@@ -13,7 +13,7 @@ import asyncio
 import collections
 import errno
 from concurrent.futures import Executor
-from typing import Optional, Tuple
+from typing import AsyncIterator, Optional, Tuple
 
 from pyuring.native.errors import UringError
 from pyuring.native.uring_ctx import UringCtx
@@ -173,6 +173,60 @@ class UringAsync:
                 fut.cancel()
 
 
+async def sendfile_splice(
+    ua: UringAsync,
+    file_fd: int,
+    sock_fd: int,
+    *,
+    offset: int = 0,
+    count: Optional[int] = None,
+    chunk: int = 256 * 1024,
+    user_data: int = 9100,
+) -> int:
+    """
+    Stream *count* bytes (or until EOF / non-positive splice result) from *file_fd* to *sock_fd*
+    using :meth:`~pyuring.native.uring_ctx.UringCtx.splice_submit` and :meth:`wait_completion`.
+
+    Uses ``off_out=-1`` for the socket. *chunk* bounds each splice size. Returns total bytes moved.
+    """
+    total = 0
+    off = int(offset)
+    ctx = ua.ctx
+    while count is None or total < count:
+        n = chunk if count is None else min(chunk, count - total)
+        ctx.splice_submit(file_fd, off, sock_fd, -1, n, 0, user_data)
+        ud, res = await ua.wait_completion()
+        if ud != user_data:
+            raise UringError(errno.EINVAL, "sendfile_splice", detail=f"unexpected user_data {ud!r}, expected {user_data!r}")
+        if res <= 0:
+            break
+        total += int(res)
+        off += int(res)
+    return total
+
+
+async def iter_multishot_accept(
+    ua: UringAsync,
+    listen_fd: int,
+    *,
+    flags: int = 0,
+    user_data: int = 9200,
+) -> AsyncIterator[int]:
+    """
+    After :meth:`~pyuring.native.uring_ctx.UringCtx.multishot_accept_submit`, await each completion
+    and yield the new client socket fd (``cqe.res``). Stops when ``res < 0`` (raises :exc:`UringError`).
+    """
+    ctx = ua.ctx
+    ctx.multishot_accept_submit(listen_fd, flags, user_data)
+    while True:
+        ud, res = await ua.wait_completion()
+        if ud != user_data:
+            continue
+        if res < 0:
+            raise UringError(-res, "iter_multishot_accept")
+        yield int(res)
+
+
 async def wait_completion_in_executor(
     ctx: UringCtx,
     executor: Optional[Executor] = None,
@@ -193,4 +247,4 @@ async def wait_completion_in_executor(
     return await loop.run_in_executor(executor, ctx.wait_completion)
 
 
-__all__ = ["UringAsync", "wait_completion_in_executor"]
+__all__ = ["UringAsync", "sendfile_splice", "iter_multishot_accept", "wait_completion_in_executor"]
