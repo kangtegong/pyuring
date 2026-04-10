@@ -14,13 +14,13 @@
   <line x1="78" y1="240.0" x2="78" y2="72" class="axis"/>
   <line x1="78" y1="240.0" x2="472" y2="240.0" class="axis"/>
   <text x="68" y="244" text-anchor="end" class="label">0</text>
-  <text x="68" y="158" text-anchor="end" class="label">1000</text>
-  <text x="68" y="72" text-anchor="end" class="label">2000</text>
+  <text x="68" y="158" text-anchor="end" class="label">900</text>
+  <text x="68" y="72" text-anchor="end" class="label">1800</text>
   <text x="38" y="158" text-anchor="middle" class="label" transform="rotate(-90 38 158)">MiB/s</text>
-  <rect x="124" y="189.5" width="92" height="50.5" class="bar-before"/>
-  <text x="170" y="183.5" text-anchor="middle" class="label">601</text>
-  <rect x="284" y="102.3" width="92" height="137.7" class="bar-pyuring"/>
-  <text x="330" y="96.3" text-anchor="middle" class="label">1639</text>
+  <rect x="124" y="179.2" width="92" height="60.8" class="bar-before"/>
+  <text x="170" y="173.2" text-anchor="middle" class="label">652</text>
+  <rect x="284" y="100.3" width="92" height="139.7" class="bar-pyuring"/>
+  <text x="330" y="94.3" text-anchor="middle" class="label">1496</text>
   <text x="170" y="268" text-anchor="middle" class="label">before</text>
   <text x="330" y="268" text-anchor="middle" class="label">pyuring</text>
 </svg>

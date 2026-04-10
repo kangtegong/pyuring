@@ -9,18 +9,18 @@
       .bar-pyuring { fill: #2d6a4f; }
     </style>
   </defs>
-  <text x="260" y="24" text-anchor="middle" class="title">examples/pytorch — many shard files</text>
-  <text x="260" y="42" text-anchor="middle" class="note">160 x 64 KiB; median 5 runs; before=ThreadPool(8)</text>
+  <text x="260" y="24" text-anchor="middle" class="title">examples/sqlite_blobs — many exported shard files (thread pool vs io_uring)</text>
+  <text x="260" y="42" text-anchor="middle" class="note">152 x 64 KiB shard_*.bin; median 5 runs; before=ThreadPool(8)</text>
   <line x1="78" y1="240.0" x2="78" y2="72" class="axis"/>
   <line x1="78" y1="240.0" x2="472" y2="240.0" class="axis"/>
   <text x="68" y="244" text-anchor="end" class="label">0</text>
   <text x="68" y="158" text-anchor="end" class="label">900</text>
   <text x="68" y="72" text-anchor="end" class="label">1800</text>
   <text x="38" y="158" text-anchor="middle" class="label" transform="rotate(-90 38 158)">MiB/s</text>
-  <rect x="124" y="173.2" width="92" height="66.8" class="bar-before"/>
-  <text x="170" y="167.2" text-anchor="middle" class="label">716</text>
-  <rect x="284" y="101.7" width="92" height="138.3" class="bar-pyuring"/>
-  <text x="330" y="95.7" text-anchor="middle" class="label">1482</text>
+  <rect x="124" y="180.5" width="92" height="59.5" class="bar-before"/>
+  <text x="170" y="174.5" text-anchor="middle" class="label">638</text>
+  <rect x="284" y="98.1" width="92" height="141.9" class="bar-pyuring"/>
+  <text x="330" y="92.1" text-anchor="middle" class="label">1520</text>
   <text x="170" y="268" text-anchor="middle" class="label">before</text>
   <text x="330" y="268" text-anchor="middle" class="label">pyuring</text>
 </svg>

@@ -4,6 +4,8 @@ Bar charts for [`examples/README.md`](https://github.com/kangtegong/pyuring/blob
 
 Workloads are **many small/medium files** (thread pool or `asyncio.gather`+executor vs batched io_uring), where batching usually favors pyuring. Regenerate with:
 
+`pip install numpy`
+
 `PYTHONPATH=. python3 scripts/gen_example_graphs.py`
 
 ## PyTorch-style (many shards)
@@ -17,3 +19,15 @@ Workloads are **many small/medium files** (thread pool or `asyncio.gather`+execu
 ## FastAPI (many on-disk reads per batch)
 
 ![fastapi](example_fastapi_many_reads.svg)
+
+## NumPy shards (`numpy_bins`)
+
+![numpy_bins](example_numpy_bins.svg)
+
+## Cached blob split into parts (`cached_reads`)
+
+![cached_reads](example_cached_reads.svg)
+
+## SQLite-export-style shard files (`sqlite_blobs`)
+
+![sqlite_blobs](example_sqlite_blobs.svg)
