@@ -25,6 +25,29 @@ On glibc x86\_64 Linux, pip installs a manylinux wheel that includes a pre-built
 
 **Docs:** [kangtegong.github.io/pyuring](https://kangtegong.github.io/pyuring/)
 
+## Use cases
+
+**You can use pyuring next to the mainstream frameworks and libraries you already use** — it is not a replacement for them; it targets the **disk read** side when work looks like **many small files** on Linux (batched `io_uring` vs. thread pools alone).
+
+That includes **asyncio**, **FastAPI** / other **ASGI** apps, **NumPy** binary I/O, many-file loaders (e.g. **PyTorch**-style shards), on-disk **caches** behind **requests** / **urllib3**, and **sqlite3** flows where BLOBs are read back as flat files. The **[examples](examples/README.md)** section pairs each shape with a short before/after; the charts below use the same multi-file read benchmarks (median MiB/s).
+
+<p align="center">
+<table>
+<tr>
+<td align="center" width="33%"><img src="https://raw.githubusercontent.com/kangtegong/pyuring/main/docs/graphs/example_pytorch_shards.svg" width="200" alt="PyTorch-style shards"/></td>
+<td align="center" width="33%"><img src="https://raw.githubusercontent.com/kangtegong/pyuring/main/docs/graphs/example_asyncio_many_files.svg" width="200" alt="asyncio many files"/></td>
+<td align="center" width="33%"><img src="https://raw.githubusercontent.com/kangtegong/pyuring/main/docs/graphs/example_fastapi_many_reads.svg" width="200" alt="FastAPI many reads"/></td>
+</tr>
+<tr>
+<td align="center"><img src="https://raw.githubusercontent.com/kangtegong/pyuring/main/docs/graphs/example_numpy_bins.svg" width="200" alt="NumPy bins"/></td>
+<td align="center"><img src="https://raw.githubusercontent.com/kangtegong/pyuring/main/docs/graphs/example_cached_reads.svg" width="200" alt="cached reads"/></td>
+<td align="center"><img src="https://raw.githubusercontent.com/kangtegong/pyuring/main/docs/graphs/example_sqlite_blobs.svg" width="200" alt="SQLite blobs"/></td>
+</tr>
+</table>
+</p>
+
+<p align="center"><sub>See <a href="examples/README.md"><code>examples/README.md</code></a> for demos, methodology, and how to regenerate charts (<code>scripts/gen_example_graphs.py</code>).</sub></p>
+
 ## What pyuring provides
 
 ### High-level file I/O helpers
